@@ -23,6 +23,12 @@ on:
           - tvOS
           - macOS-standalone
           - publish-android
+  push:
+    tags:
+      - "v*"
+
+env:
+  BUILD_PACKAGE_OUTPUTS: "false"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build }}
@@ -326,7 +332,7 @@ jobs:
           PKG_VERSION="${PKG_VERSION//-/\~}"
           echo "PKG_VERSION=${PKG_VERSION}" >> "${GITHUB_ENV}"
       - name: Package DEB
-        if: matrix.debian != ''
+        if: matrix.debian != '' && env.BUILD_PACKAGE_OUTPUTS == 'true'
         run: |
           set -xeuo pipefail
           sudo gem install fpm
@@ -346,7 +352,7 @@ jobs:
           EOF
           debsigs --sign=origin -k ${{ secrets.GPG_KEY_ID }} --gpgopts '--pinentry-mode loopback --passphrase "${{ secrets.GPG_PASSPHRASE }}"' dist/*.deb
       - name: Package RPM
-        if: matrix.rpm != ''
+        if: matrix.rpm != '' && env.BUILD_PACKAGE_OUTPUTS == 'true'
         run: |-
           set -xeuo pipefail
           sudo gem install fpm
@@ -365,7 +371,7 @@ jobs:
           EOF
           rpmsign --addsign dist/*.rpm
       - name: Package Pacman
-        if: matrix.pacman != ''
+        if: matrix.pacman != '' && env.BUILD_PACKAGE_OUTPUTS == 'true'
         run: |-
           set -xeuo pipefail
           sudo gem install fpm
@@ -378,7 +384,7 @@ jobs:
             --architecture ${{ matrix.pacman }} \
             dist/sing-box=/usr/bin/sing-box
       - name: Package OpenWrt
-        if: matrix.openwrt != ''
+        if: matrix.openwrt != '' && env.BUILD_PACKAGE_OUTPUTS == 'true'
         run: |-
           set -xeuo pipefail
           sudo gem install fpm
@@ -393,11 +399,11 @@ jobs:
           done
           rm "dist/openwrt.deb"
       - name: Install apk-tools
-        if: matrix.openwrt != '' || matrix.alpine != ''
+        if: env.BUILD_PACKAGE_OUTPUTS == 'true' && (matrix.openwrt != '' || matrix.alpine != '')
         run: |-
           docker run --rm -v /usr/local/bin:/mnt alpine:edge sh -c "apk add --no-cache apk-tools-static && cp /sbin/apk.static /mnt/apk && chmod +x /mnt/apk"
       - name: Package OpenWrt APK
-        if: matrix.openwrt != ''
+        if: matrix.openwrt != '' && env.BUILD_PACKAGE_OUTPUTS == 'true'
         run: |-
           set -xeuo pipefail
           for architecture in ${{ matrix.openwrt }}; do
@@ -408,7 +414,7 @@ jobs:
               "dist/sing-box_${{ needs.calculate_version.outputs.version }}_openwrt_${architecture}.apk"
           done
       - name: Package Alpine APK
-        if: matrix.alpine != ''
+        if: matrix.alpine != '' && env.BUILD_PACKAGE_OUTPUTS == 'true'
         run: |-
           set -xeuo pipefail
           .github/build_alpine_apk.sh \
@@ -791,35 +797,35 @@ jobs:
   build_apple:
     name: Build Apple clients
     runs-on: macos-26
-    if: false # github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'app-store' || inputs.build == 'iOS' || inputs.build == 'macOS' || inputs.build == 'tvOS' || inputs.build == 'macOS-standalone'
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build == 'macOS-standalone')
     needs:
       - calculate_version
     strategy:
       matrix:
         include:
           - name: iOS
-            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'app-store'|| inputs.build == 'iOS' }}
+            if: false
             platform: ios
             scheme: SFI
             destination: 'generic/platform=iOS'
             archive: build/SFI.xcarchive
             upload: SFI/Upload.plist
           - name: macOS
-            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'app-store'|| inputs.build == 'macOS' }}
+            if: false
             platform: macos
             scheme: SFM
             destination: 'generic/platform=macOS'
             archive: build/SFM.xcarchive
             upload: SFI/Upload.plist
           - name: tvOS
-            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'app-store'|| inputs.build == 'tvOS' }}
+            if: false
             platform: tvos
             scheme: SFT
             destination: 'generic/platform=tvOS'
             archive: build/SFT.xcarchive
             upload: SFI/Upload.plist
           - name: macOS-standalone
-            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'macOS-standalone' }}
+            if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build == 'macOS-standalone') }}
             platform: macos
             scheme: SFM.System
             destination: 'generic/platform=macOS'
@@ -940,7 +946,7 @@ jobs:
         run: |-
           go run -v ./cmd/internal/app_store_connect publish_testflight ${{ matrix.platform }}
       - name: Build image
-        if: matrix.if && matrix.name == 'macOS-standalone' && github.event_name == 'workflow_dispatch'
+        if: matrix.if && matrix.name == 'macOS-standalone' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
         run: |-
           pushd clients/apple
           xcodebuild -exportArchive \
@@ -965,14 +971,14 @@ jobs:
           cp clients/apple/SFM.dmg "dist/SFM-${VERSION}-universal.dmg"
           cp "clients/apple/${{ matrix.archive }}/SFM.dSYMs.zip" "dist/SFM-${VERSION}-universal.dSYMs.zip"
       - name: Upload image
-        if: matrix.if && matrix.name == 'macOS-standalone' && github.event_name == 'workflow_dispatch'
+        if: matrix.if && matrix.name == 'macOS-standalone' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
         uses: actions/upload-artifact@v4
         with:
           name: binary-macos-dmg
           path: 'dist'
   upload:
     name: Upload builds
-    if: "!failure() && github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Apple' || inputs.build == 'macOS-standalone')"
+    if: "!failure() && (startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && (inputs.build == 'All' || inputs.build == 'Binary' || inputs.build == 'Android' || inputs.build == 'Apple' || inputs.build == 'macOS-standalone')))"
     runs-on: ubuntu-latest
     needs:
       - calculate_version
@@ -1010,6 +1016,19 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Keep release artifacts
+        run: |-
+          set -euo pipefail
+          mkdir release
+          find dist -type f \( \
+            -name '*.tar.gz' -o \
+            -name '*.apk' -o \
+            -name 'SFA-version-metadata.json' -o \
+            -name 'SFM-*.dmg' \
+          \) -exec cp '{}' release/ \;
+          rm -rf dist
+          mv release dist
+          find dist -maxdepth 1 -type f -print | sort
       - name: Upload builds
         if: ${{ env.PUBLISHED == 'false' }}
         run: |-
