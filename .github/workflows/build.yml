@@ -76,38 +76,15 @@ jobs:
 
           - { os: freebsd, arch: amd64 }
           - { os: freebsd, arch: arm64 }
-
-          - { os: windows, arch: amd64, legacy_win7: true, legacy_name: "windows-7" }
-          - { os: windows, arch: arm64, naive: true }
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
           fetch-depth: 0
       - name: Setup Go
-        if: ${{ ! matrix.legacy_win7 }}
         uses: actions/setup-go@v5
         with:
           go-version: ~1.25.10
-      - name: Cache Go for Windows 7
-        if: matrix.legacy_win7
-        id: cache-go-for-windows7
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/go_win7
-          key: go_win7_1258
-      - name: Setup Go for Windows 7
-        if: matrix.legacy_win7 && steps.cache-go-for-windows7.outputs.cache-hit != 'true'
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |-
-          .github/setup_go_for_windows7.sh
-      - name: Setup Go for Windows 7
-        if: matrix.legacy_win7
-        run: |-
-          echo "PATH=$HOME/go/go_win7/bin:$PATH" >> $GITHUB_ENV
-          echo "GOROOT=$HOME/go/go_win7" >> $GITHUB_ENV
       - name: Clone cronet-go
         if: matrix.naive
         run: |
@@ -225,9 +202,6 @@ jobs:
       - name: Set name
         run: |-
           DIR_NAME="sing-box-${{ needs.calculate_version.outputs.version }}-${{ matrix.os }}-${{ matrix.arch }}"
-          if [[ -n "${{ matrix.legacy_name }}" ]]; then
-            DIR_NAME="${DIR_NAME}-legacy-${{ matrix.legacy_name }}"
-          fi
           if [[ "${{ matrix.variant }}" == "musl" ]]; then
             DIR_NAME="${DIR_NAME}-musl"
           fi
@@ -254,7 +228,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.legacy_name && format('-legacy-{0}', matrix.legacy_name) }}${{ matrix.variant && format('-{0}', matrix.variant) }}
+          name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.variant && format('-{0}', matrix.variant) }}
           path: "dist"
   build_darwin:
     name: Build Darwin binaries
