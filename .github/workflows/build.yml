@@ -458,9 +458,26 @@ jobs:
           go run -v ./cmd/internal/update_android_version --ci --nightly
       - name: Build
         run: |-
-          mkdir clients/android/app/libs
+          mkdir -p clients/android/app/libs
           cp *.aar clients/android/app/libs
           cd clients/android
+          if [ -z "${LOCAL_PROPERTIES:-}" ]; then
+            rm -f app/release.keystore
+            "$JAVA_HOME/bin/keytool" -genkeypair -v \
+              -keystore app/release.keystore \
+              -storepass fork-release \
+              -keypass fork-release \
+              -alias fork-release \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=sing-box fork"
+            cat > local.properties << EOF
+          KEYSTORE_PASS=fork-release
+          ALIAS_NAME=fork-release
+          ALIAS_PASS=fork-release
+          EOF
+          fi
           perl -0pi -e 's/isUniversalApk = true/isUniversalApk = false/' app/build.gradle.kts
           perl -0pi -e 's/include\("armeabi-v7a", "arm64-v8a", "x86", "x86_64"\)/include("arm64-v8a")/' app/build.gradle.kts
           grep -q 'include("arm64-v8a")' app/build.gradle.kts
@@ -781,6 +798,7 @@ jobs:
           mkdir release
           find dist -type f \( \
             -name '*.tar.gz' -o \
+            -name '*.zip' -o \
             -name '*.apk' -o \
             -name 'SFA-version-metadata.json' \
           \) -exec cp '{}' release/ \;
