@@ -64,6 +64,8 @@ func markFallbackTestHealthy(group *FallbackGroup, outbound adapter.Outbound) {
 }
 
 func TestFallbackSelectsFirstHealthyOutbound(t *testing.T) {
+	t.Parallel()
+
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
 	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
 	tertiary := newFallbackTestOutbound("tertiary", []string{N.NetworkTCP, N.NetworkUDP})
@@ -91,6 +93,8 @@ func TestFallbackSelectsFirstHealthyOutbound(t *testing.T) {
 }
 
 func TestFallbackSelectsFirstSupportedOutboundWithoutHistory(t *testing.T) {
+	t.Parallel()
+
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
 	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP})
 	group := newFallbackTestGroup(t, primary, secondary)
@@ -105,6 +109,8 @@ func TestFallbackSelectsFirstSupportedOutboundWithoutHistory(t *testing.T) {
 }
 
 func TestFallbackSelectFiltersByNetwork(t *testing.T) {
+	t.Parallel()
+
 	tcpOnly := newFallbackTestOutbound("tcp-only", []string{N.NetworkTCP})
 	udpOnly := newFallbackTestOutbound("udp-only", []string{N.NetworkUDP})
 	group := newFallbackTestGroup(t, tcpOnly, udpOnly)
@@ -122,6 +128,8 @@ func TestFallbackSelectFiltersByNetwork(t *testing.T) {
 }
 
 func TestFallbackUpdateSwitchesDownAndBackUp(t *testing.T) {
+	t.Parallel()
+
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
 	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
 	group := newFallbackTestGroup(t, primary, secondary)
@@ -147,6 +155,8 @@ func TestFallbackUpdateSwitchesDownAndBackUp(t *testing.T) {
 }
 
 func TestFallbackUpdateKeepsCurrentWhenAllUnhealthyThenSwitchesBack(t *testing.T) {
+	t.Parallel()
+
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
 	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
 	group := newFallbackTestGroup(t, primary, secondary)
@@ -175,6 +185,8 @@ func TestFallbackUpdateKeepsCurrentWhenAllUnhealthyThenSwitchesBack(t *testing.T
 }
 
 func TestFallbackUpdateInterruptsConnectionsOnSwitch(t *testing.T) {
+	t.Parallel()
+
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
 	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
 	group := newFallbackTestGroup(t, primary, secondary)
@@ -204,6 +216,8 @@ func TestFallbackUpdateInterruptsConnectionsOnSwitch(t *testing.T) {
 }
 
 func TestFallbackDialFailureDeletesHistory(t *testing.T) {
+	t.Parallel()
+
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
 	primary.dialErr = errors.New("dial failed")
 	group := newFallbackTestGroup(t, primary)
@@ -223,6 +237,8 @@ func TestFallbackDialFailureDeletesHistory(t *testing.T) {
 }
 
 func TestFallbackDialFailureSwitchesNextRequest(t *testing.T) {
+	t.Parallel()
+
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
 	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP})
 	group := newFallbackTestGroup(t, primary, secondary)
@@ -260,6 +276,8 @@ func TestFallbackDialFailureSwitchesNextRequest(t *testing.T) {
 }
 
 func TestFallbackListenPacketFailureSwitchesNextRequest(t *testing.T) {
+	t.Parallel()
+
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkUDP})
 	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkUDP})
 	group := newFallbackTestGroup(t, primary, secondary)
@@ -297,6 +315,8 @@ func TestFallbackListenPacketFailureSwitchesNextRequest(t *testing.T) {
 }
 
 func TestFallbackDisplayName(t *testing.T) {
+	t.Parallel()
+
 	if displayName := C.ProxyDisplayName(C.TypeFallback); displayName != "Fallback" {
 		t.Fatalf("expected Fallback display name, got %s", displayName)
 	}
