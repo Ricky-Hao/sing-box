@@ -8,6 +8,7 @@ import (
 )
 
 func TestFragmentReassembly(t *testing.T) {
+	t.Parallel()
 	var reassembler fragmentReassembler
 	first := buildFragmentPacket(0x12345678, false, 0, []byte("hello "))
 	payload, ok := reassembler.handle(first)

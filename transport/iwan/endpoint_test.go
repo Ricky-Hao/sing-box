@@ -16,8 +16,8 @@ import (
 )
 
 func TestEndpointHandshakeAndCloseReconnect(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Parallel()
+	ctx := t.Context()
 	dialer := &pipeDialer{
 		servers: make(chan net.Conn, 2),
 	}
@@ -60,6 +60,7 @@ func TestEndpointHandshakeAndCloseReconnect(t *testing.T) {
 }
 
 func TestEndpointIgnoresOpenRejectAfterEstablished(t *testing.T) {
+	t.Parallel()
 	endpoint, server, cleanup := startTestEndpoint(t)
 	defer cleanup()
 	establishEndpoint(t, endpoint, server, [2]byte{0x12, 0x34}, [4]byte{0xde, 0xad, 0xbe, 0xef}, netip.MustParseAddr("10.20.30.40"))
@@ -84,8 +85,8 @@ func TestEndpointIgnoresOpenRejectAfterEstablished(t *testing.T) {
 }
 
 func TestEndpointIgnoresStaleOpenAck(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Parallel()
+	ctx := t.Context()
 	dialer := &pipeDialer{
 		servers: make(chan net.Conn, 3),
 	}
@@ -136,6 +137,7 @@ func TestEndpointIgnoresStaleOpenAck(t *testing.T) {
 }
 
 func TestEndpointDataTimeoutSendsClose(t *testing.T) {
+	t.Parallel()
 	endpoint, server, cleanup := startTestEndpoint(t)
 	defer cleanup()
 	token := [2]byte{0x12, 0x34}
@@ -176,8 +178,8 @@ func TestEndpointDataTimeoutSendsClose(t *testing.T) {
 }
 
 func TestStackDeviceReplacesLocalAddress(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Parallel()
+	ctx := t.Context()
 	endpoint, err := NewEndpoint(EndpointOptions{
 		Context:  ctx,
 		Logger:   logger.NOP(),
@@ -224,7 +226,7 @@ func stackHasAddress(device *stackDevice, address netip.Addr) bool {
 
 func startTestEndpoint(t *testing.T) (*Endpoint, net.Conn, func()) {
 	t.Helper()
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx := t.Context()
 	dialer := &pipeDialer{
 		servers: make(chan net.Conn, 2),
 	}
@@ -239,18 +241,15 @@ func startTestEndpoint(t *testing.T) (*Endpoint, net.Conn, func()) {
 		Encrypt:  true,
 	})
 	if err != nil {
-		cancel()
 		t.Fatal(err)
 	}
 	if err = endpoint.Start(); err != nil {
-		cancel()
 		t.Fatal(err)
 	}
 	server := <-dialer.servers
 	return endpoint, server, func() {
 		_ = server.Close()
 		_ = endpoint.Close()
-		cancel()
 	}
 }
 

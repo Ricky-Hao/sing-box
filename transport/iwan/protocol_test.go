@@ -9,6 +9,7 @@ import (
 )
 
 func TestBuildOpenPacket(t *testing.T) {
+	t.Parallel()
 	packet, err := buildOpenPacket("myuser", "mypassword", 1400, true, 7, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +42,7 @@ func TestBuildOpenPacket(t *testing.T) {
 }
 
 func TestXORKeyRoundTrip(t *testing.T) {
+	t.Parallel()
 	key := deriveXORKey("myuser", "mypassword")
 	payload := []byte("hello iwan")
 	encrypted := append([]byte(nil), payload...)
@@ -55,6 +57,7 @@ func TestXORKeyRoundTrip(t *testing.T) {
 }
 
 func TestParseOpenAck(t *testing.T) {
+	t.Parallel()
 	packet := make([]byte, signedHeader)
 	packet[0] = packetOpenAck
 	copy(packet[2:4], []byte{0x12, 0x34})
@@ -84,6 +87,7 @@ func TestParseOpenAck(t *testing.T) {
 }
 
 func TestBuildEchoPacket(t *testing.T) {
+	t.Parallel()
 	packet := buildEchoPacket([2]byte{1, 2}, [4]byte{3, 4, 5, 6}, 7, 8, 9, 0x10203040, time.Unix(10, 0))
 	if len(packet) != signedHeader+36 {
 		t.Fatalf("unexpected echo length: %d", len(packet))

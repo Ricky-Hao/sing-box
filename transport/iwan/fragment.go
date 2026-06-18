@@ -85,9 +85,7 @@ func (r *fragmentReassembler) handle(packet []byte) ([]byte, bool) {
 			copy(output[fragmentLength:], slot.buffer[:slot.length])
 		} else {
 			totalLength = fragmentOffset + fragmentLength
-			if totalLength < int(slot.length) {
-				totalLength = int(slot.length)
-			}
+			totalLength = max(totalLength, int(slot.length))
 			if totalLength > fragmentOutputSize {
 				slot.inUse = false
 				return nil, false
