@@ -49,7 +49,7 @@ Dashboard should provide a Mode selector for switching when the configuration us
 
 #### Groups
 
-When the configuration includes group outbounds (specifically, Selector or URLTest),
+When the configuration includes group outbounds (specifically, Selector, URLTest, or Fallback),
 the dashboard should provide a Group selector for status display or switching.
 
 ### Chore

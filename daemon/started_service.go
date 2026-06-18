@@ -589,9 +589,11 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
 	if !isOutboundGroup {
 		return nil, E.New("outbound is not a group: ", groupTag)
 	}
-	urlTest, isURLTest := abstractOutboundGroup.(*group.URLTest)
-	if isURLTest {
-		go urlTest.CheckOutbounds()
+	checkOutboundGroup, isCheckOutboundGroup := abstractOutboundGroup.(interface {
+		CheckOutbounds()
+	})
+	if isCheckOutboundGroup {
+		go checkOutboundGroup.CheckOutbounds()
 	} else {
 		historyStorage := boxService.urlTestHistoryStorage
 
