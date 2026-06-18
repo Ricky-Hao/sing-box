@@ -196,6 +196,8 @@ type FallbackGroup struct {
 	outbounds                    []adapter.Outbound
 	link                         string
 	interval                     time.Duration
+	probeInterval                time.Duration
+	probeTimeout                 time.Duration
 	idleTimeout                  time.Duration
 	history                      adapter.URLTestHistoryStorage
 	checking                     atomic.Bool
@@ -214,6 +216,7 @@ func NewFallbackGroup(ctx context.Context, outboundManager adapter.OutboundManag
 	if interval == 0 {
 		interval = C.DefaultURLTestInterval
 	}
+	probeInterval, probeTimeout := fallbackProbeTiming(interval)
 	if idleTimeout == 0 {
 		idleTimeout = C.DefaultURLTestIdleTimeout
 	}
@@ -235,6 +238,8 @@ func NewFallbackGroup(ctx context.Context, outboundManager adapter.OutboundManag
 		outbounds:                    outbounds,
 		link:                         link,
 		interval:                     interval,
+		probeInterval:                probeInterval,
+		probeTimeout:                 probeTimeout,
 		idleTimeout:                  idleTimeout,
 		history:                      history,
 		close:                        make(chan struct{}),
@@ -262,9 +267,9 @@ func (g *FallbackGroup) Touch() {
 		g.lastActive.Store(time.Now())
 		return
 	}
-	ticker := time.NewTicker(g.interval)
+	ticker := time.NewTicker(g.probeInterval)
 	g.ticker = ticker
-	g.pauseCallback = pause.RegisterTicker(g.pause, ticker, g.interval, nil)
+	g.pauseCallback = pause.RegisterTicker(g.pause, ticker, g.probeInterval, nil)
 	go g.loopCheck(ticker, g.close)
 }
 
@@ -300,8 +305,20 @@ func (g *FallbackGroup) Select(network string) (adapter.Outbound, bool) {
 	return nil, false
 }
 
+func fallbackProbeTiming(interval time.Duration) (probeInterval time.Duration, probeTimeout time.Duration) {
+	probeTimeout = min(C.TCPTimeout, interval/2)
+	if probeTimeout <= 0 {
+		probeTimeout = interval
+	}
+	probeInterval = interval - probeTimeout
+	if probeInterval <= 0 {
+		probeInterval = interval
+	}
+	return
+}
+
 func (g *FallbackGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{}) {
-	if time.Since(g.lastActive.Load()) > g.interval {
+	if time.Since(g.lastActive.Load()) > g.probeInterval {
 		g.lastActive.Store(time.Now())
 		g.CheckOutbounds(false)
 	}
@@ -327,14 +344,14 @@ func (g *FallbackGroup) loopCheck(ticker *time.Ticker, closeChan <-chan struct{}
 }
 
 func (g *FallbackGroup) CheckOutbounds(force bool) {
-	_, _ = g.urlTest(g.ctx, force)
+	_, _ = g.urlTest(g.ctx, force, false)
 }
 
 func (g *FallbackGroup) URLTest(ctx context.Context) (map[string]uint16, error) {
-	return g.urlTest(ctx, false)
+	return g.urlTest(ctx, false, true)
 }
 
-func (g *FallbackGroup) urlTest(ctx context.Context, force bool) (map[string]uint16, error) {
+func (g *FallbackGroup) urlTest(ctx context.Context, force bool, skipRecentHistory bool) (map[string]uint16, error) {
 	result := make(map[string]uint16)
 	if g.checking.Swap(true) {
 		return result, nil
@@ -350,7 +367,7 @@ func (g *FallbackGroup) urlTest(ctx context.Context, force bool) (map[string]uin
 			continue
 		}
 		history := g.history.LoadURLTestHistory(realTag)
-		if !force && history != nil && time.Since(history.Time) < g.interval {
+		if skipRecentHistory && !force && history != nil && time.Since(history.Time) < g.interval {
 			continue
 		}
 		checked[realTag] = true
@@ -359,7 +376,7 @@ func (g *FallbackGroup) urlTest(ctx context.Context, force bool) (map[string]uin
 			continue
 		}
 		b.Go(realTag, func() (any, error) {
-			testCtx, cancel := context.WithTimeout(g.ctx, g.interval)
+			testCtx, cancel := context.WithTimeout(g.ctx, g.probeTimeout)
 			defer cancel()
 			t, err := urltest.URLTest(testCtx, g.link, p)
 			if err != nil {

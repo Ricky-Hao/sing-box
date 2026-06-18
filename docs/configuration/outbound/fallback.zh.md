@@ -33,9 +33,14 @@
 
 #### interval
 
-测试间隔。默认使用 `3m`。
+最大健康检查预算。默认使用 `3m`。
 
-`interval` 同时限制每次 URL 测试的最大耗时。测试超过 `interval` 时，本轮检查会认为该出站不可用。
+Fallback 会在内部把该值拆分为探测调度时间和探测超时：
+
+* 探测超时：`min(15s, interval / 2)`
+* 探测调度时间：`interval - 探测超时`
+
+这样可以避免单次较慢的 URL 测试占满整个 interval，阻塞下一轮定时检查。
 
 #### idle_timeout
 
