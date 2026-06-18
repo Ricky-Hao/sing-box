@@ -22,6 +22,7 @@
 | 类型          | 格式                        |
 |-------------|---------------------------|
 | `wireguard` | [WireGuard](./wireguard/) |
+| `iwan`      | [iWAN](./iwan/)           |
 | `tailscale` | [Tailscale](./tailscale/) |
 
 #### tag
