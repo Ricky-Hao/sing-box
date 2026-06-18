@@ -795,15 +795,17 @@ jobs:
       - name: Keep release artifacts
         run: |-
           set -euo pipefail
-          mkdir release
+          RELEASE_DIR="$RUNNER_TEMP/release-artifacts"
+          rm -rf "$RELEASE_DIR"
+          mkdir -p "$RELEASE_DIR"
           find dist -type f \( \
             -name '*.tar.gz' -o \
             -name '*.zip' -o \
             -name '*.apk' -o \
             -name 'SFA-version-metadata.json' \
-          \) -exec cp '{}' release/ \;
+          \) -exec cp '{}' "$RELEASE_DIR/" \;
           rm -rf dist
-          mv release dist
+          mv "$RELEASE_DIR" dist
           find dist -maxdepth 1 -type f -print | sort
       - name: Upload builds
         if: ${{ env.PUBLISHED == 'false' }}
