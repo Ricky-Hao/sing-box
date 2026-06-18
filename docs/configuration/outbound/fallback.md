@@ -33,9 +33,14 @@ The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
 
 #### interval
 
-The test interval. `3m` will be used if empty.
+The maximum health check budget. `3m` will be used if empty.
 
-`interval` also limits the maximum duration of each URL test. When a test exceeds `interval`, the outbound is considered unavailable for this check.
+Fallback internally splits this value into probe scheduling time and probe timeout:
+
+* probe timeout: `min(15s, interval / 2)`
+* probe scheduling time: `interval - probe timeout`
+
+This prevents one slow URL test from occupying the whole interval and blocking the next scheduled check.
 
 #### idle_timeout
 

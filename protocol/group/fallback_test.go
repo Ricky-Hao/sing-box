@@ -23,6 +23,54 @@ type fallbackTestOutbound struct {
 	listenCount int
 }
 
+type fallbackTestOutboundManager struct {
+	outbounds map[string]adapter.Outbound
+}
+
+func newFallbackTestOutboundManager(outbounds ...adapter.Outbound) *fallbackTestOutboundManager {
+	manager := &fallbackTestOutboundManager{
+		outbounds: make(map[string]adapter.Outbound, len(outbounds)),
+	}
+	for _, outbound := range outbounds {
+		manager.outbounds[outbound.Tag()] = outbound
+	}
+	return manager
+}
+
+func (m *fallbackTestOutboundManager) Start(stage adapter.StartStage) error {
+	return nil
+}
+
+func (m *fallbackTestOutboundManager) Close() error {
+	return nil
+}
+
+func (m *fallbackTestOutboundManager) Outbounds() []adapter.Outbound {
+	outbounds := make([]adapter.Outbound, 0, len(m.outbounds))
+	for _, outbound := range m.outbounds {
+		outbounds = append(outbounds, outbound)
+	}
+	return outbounds
+}
+
+func (m *fallbackTestOutboundManager) Outbound(tag string) (adapter.Outbound, bool) {
+	outbound, loaded := m.outbounds[tag]
+	return outbound, loaded
+}
+
+func (m *fallbackTestOutboundManager) Default() adapter.Outbound {
+	return nil
+}
+
+func (m *fallbackTestOutboundManager) Remove(tag string) error {
+	delete(m.outbounds, tag)
+	return nil
+}
+
+func (m *fallbackTestOutboundManager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
+	return nil
+}
+
 func newFallbackTestOutbound(tag string, networks []string) *fallbackTestOutbound {
 	return &fallbackTestOutbound{
 		Adapter: outboundAdapter.NewAdapter("test", tag, networks, nil),
@@ -89,6 +137,52 @@ func TestFallbackSelectsFirstHealthyOutbound(t *testing.T) {
 	}
 	if selected != primary {
 		t.Fatalf("expected primary after recovery, got %s", selected.Tag())
+	}
+}
+
+func TestFallbackCheckOutboundsRefreshesRecentHistory(t *testing.T) {
+	t.Parallel()
+
+	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
+	group := newFallbackTestGroup(t, primary)
+	group.outbound = newFallbackTestOutboundManager(primary)
+	markFallbackTestHealthy(group, primary)
+
+	group.CheckOutbounds(false)
+
+	if primary.dialCount == 0 {
+		t.Fatal("expected periodic check to probe outbound even with recent history")
+	}
+	if history := group.history.LoadURLTestHistory(RealTag(primary)); history != nil {
+		t.Fatal("expected failed periodic check to delete recent history")
+	}
+}
+
+func TestFallbackProbeTimingFitsInterval(t *testing.T) {
+	t.Parallel()
+
+	probeInterval, probeTimeout := fallbackProbeTiming(10 * time.Second)
+	if probeInterval != 5*time.Second {
+		t.Fatalf("expected probe interval 5s, got %s", probeInterval)
+	}
+	if probeTimeout != 5*time.Second {
+		t.Fatalf("expected probe timeout 5s, got %s", probeTimeout)
+	}
+	if probeInterval+probeTimeout != 10*time.Second {
+		t.Fatalf("expected probe timing to fit configured interval, got %s", probeInterval+probeTimeout)
+	}
+}
+
+func TestFallbackProbeTimingCapsTimeout(t *testing.T) {
+	t.Parallel()
+
+	interval := time.Minute
+	probeInterval, probeTimeout := fallbackProbeTiming(interval)
+	if probeTimeout != C.TCPTimeout {
+		t.Fatalf("expected probe timeout %s, got %s", C.TCPTimeout, probeTimeout)
+	}
+	if probeInterval+probeTimeout != interval {
+		t.Fatalf("expected probe timing to fit configured interval, got %s", probeInterval+probeTimeout)
 	}
 }
 
