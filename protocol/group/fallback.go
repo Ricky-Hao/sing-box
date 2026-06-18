@@ -359,7 +359,7 @@ func (g *FallbackGroup) urlTest(ctx context.Context, force bool) (map[string]uin
 			continue
 		}
 		b.Go(realTag, func() (any, error) {
-			testCtx, cancel := context.WithTimeout(g.ctx, C.TCPTimeout)
+			testCtx, cancel := context.WithTimeout(g.ctx, g.interval)
 			defer cancel()
 			t, err := urltest.URLTest(testCtx, g.link, p)
 			if err != nil {
