@@ -145,6 +145,9 @@ jobs:
           else
             TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)
           fi
+          if [[ "${{ matrix.os }}" == "freebsd" ]]; then
+            TAGS=$(echo "$TAGS" | sed -e 's/,with_tailscale//g' -e 's/with_tailscale,//g' -e 's/with_tailscale//g')
+          fi
           if [[ "${{ matrix.variant }}" == "purego" ]]; then
             TAGS="${TAGS},with_purego"
           elif [[ "${{ matrix.variant }}" == "musl" ]]; then
