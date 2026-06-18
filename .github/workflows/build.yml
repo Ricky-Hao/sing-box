@@ -797,35 +797,35 @@ jobs:
   build_apple:
     name: Build Apple clients
     runs-on: macos-26
-    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build == 'macOS-standalone')
+    if: false # github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'app-store' || inputs.build == 'iOS' || inputs.build == 'macOS' || inputs.build == 'tvOS' || inputs.build == 'macOS-standalone'
     needs:
       - calculate_version
     strategy:
       matrix:
         include:
           - name: iOS
-            if: false
+            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'app-store'|| inputs.build == 'iOS' }}
             platform: ios
             scheme: SFI
             destination: 'generic/platform=iOS'
             archive: build/SFI.xcarchive
             upload: SFI/Upload.plist
           - name: macOS
-            if: false
+            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'app-store'|| inputs.build == 'macOS' }}
             platform: macos
             scheme: SFM
             destination: 'generic/platform=macOS'
             archive: build/SFM.xcarchive
             upload: SFI/Upload.plist
           - name: tvOS
-            if: false
+            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'app-store'|| inputs.build == 'tvOS' }}
             platform: tvos
             scheme: SFT
             destination: 'generic/platform=tvOS'
             archive: build/SFT.xcarchive
             upload: SFI/Upload.plist
           - name: macOS-standalone
-            if: ${{ startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.build == 'macOS-standalone') }}
+            if: ${{ github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Apple' || inputs.build == 'macOS-standalone' }}
             platform: macos
             scheme: SFM.System
             destination: 'generic/platform=macOS'
@@ -946,7 +946,7 @@ jobs:
         run: |-
           go run -v ./cmd/internal/app_store_connect publish_testflight ${{ matrix.platform }}
       - name: Build image
-        if: matrix.if && matrix.name == 'macOS-standalone' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+        if: matrix.if && matrix.name == 'macOS-standalone' && github.event_name == 'workflow_dispatch'
         run: |-
           pushd clients/apple
           xcodebuild -exportArchive \
@@ -971,7 +971,7 @@ jobs:
           cp clients/apple/SFM.dmg "dist/SFM-${VERSION}-universal.dmg"
           cp "clients/apple/${{ matrix.archive }}/SFM.dSYMs.zip" "dist/SFM-${VERSION}-universal.dSYMs.zip"
       - name: Upload image
-        if: matrix.if && matrix.name == 'macOS-standalone' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+        if: matrix.if && matrix.name == 'macOS-standalone' && github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: binary-macos-dmg
@@ -1023,8 +1023,7 @@ jobs:
           find dist -type f \( \
             -name '*.tar.gz' -o \
             -name '*.apk' -o \
-            -name 'SFA-version-metadata.json' -o \
-            -name 'SFM-*.dmg' \
+            -name 'SFA-version-metadata.json' \
           \) -exec cp '{}' release/ \;
           rm -rf dist
           mv release dist
