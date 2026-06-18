@@ -102,6 +102,7 @@ func EndpointRegistry() *endpoint.Registry {
 
 	registerWireGuardEndpoint(registry)
 	registerTailscaleEndpoint(registry)
+	registerIWANEndpoint(registry)
 
 	return registry
 }
