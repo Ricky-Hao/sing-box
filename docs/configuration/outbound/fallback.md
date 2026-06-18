@@ -35,6 +35,8 @@ The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
 
 The test interval. `3m` will be used if empty.
 
+`interval` also limits the maximum duration of each URL test. When a test exceeds `interval`, the outbound is considered unavailable for this check.
+
 #### idle_timeout
 
 The idle timeout. `30m` will be used if empty.
