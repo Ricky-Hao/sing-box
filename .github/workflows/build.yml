@@ -464,22 +464,21 @@ jobs:
           mkdir -p clients/android/app/libs
           cp *.aar clients/android/app/libs
           cd clients/android
-          if [ -z "${LOCAL_PROPERTIES:-}" ]; then
+          if [ -n "${SFA_RELEASE_KEYSTORE:-}" ]; then
+            if [ -z "${SFA_KEYSTORE_PASS:-}" ] || [ -z "${SFA_KEY_ALIAS:-}" ] || [ -z "${SFA_KEY_PASS:-}" ]; then
+              echo "::error::SFA signing secrets are incomplete. Set SFA_RELEASE_KEYSTORE, SFA_KEYSTORE_PASS, SFA_KEY_ALIAS, and SFA_KEY_PASS."
+              exit 1
+            fi
             rm -f app/release.keystore
-            "$JAVA_HOME/bin/keytool" -genkeypair -v \
-              -keystore app/release.keystore \
-              -storepass fork-release \
-              -keypass fork-release \
-              -alias fork-release \
-              -keyalg RSA \
-              -keysize 2048 \
-              -validity 10000 \
-              -dname "CN=sing-box fork"
-            cat > local.properties << EOF
-          KEYSTORE_PASS=fork-release
-          ALIAS_NAME=fork-release
-          ALIAS_PASS=fork-release
-          EOF
+            printf '%s' "$SFA_RELEASE_KEYSTORE" | base64 --decode > app/release.keystore
+            {
+              printf 'KEYSTORE_PASS=%s\n' "$SFA_KEYSTORE_PASS"
+              printf 'ALIAS_NAME=%s\n' "$SFA_KEY_ALIAS"
+              printf 'ALIAS_PASS=%s\n' "$SFA_KEY_PASS"
+            } > local.properties
+          elif [ -z "${LOCAL_PROPERTIES:-}" ]; then
+            echo "::error::SFA release signing is not configured. Set SFA_RELEASE_KEYSTORE, SFA_KEYSTORE_PASS, SFA_KEY_ALIAS, and SFA_KEY_PASS to keep APK signatures stable."
+            exit 1
           fi
           perl -0pi -e 's/isUniversalApk = true/isUniversalApk = false/' app/build.gradle.kts
           perl -0pi -e 's/include\("armeabi-v7a", "arm64-v8a", "x86", "x86_64"\)/include("arm64-v8a")/' app/build.gradle.kts
@@ -488,6 +487,10 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
+          SFA_RELEASE_KEYSTORE: ${{ secrets.SFA_RELEASE_KEYSTORE }}
+          SFA_KEYSTORE_PASS: ${{ secrets.SFA_KEYSTORE_PASS }}
+          SFA_KEY_ALIAS: ${{ secrets.SFA_KEY_ALIAS }}
+          SFA_KEY_PASS: ${{ secrets.SFA_KEY_PASS }}
       - name: Prepare upload
         run: |-
           mkdir -p dist
