@@ -414,9 +414,10 @@ jobs:
         with:
           ndk-version: r28
       - name: Setup OpenJDK
-        run: |-
-          sudo apt update && sudo apt install -y openjdk-17-jdk-headless
-          /usr/lib/jvm/java-17-openjdk-amd64/bin/java --version
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Set tag
         run: |-
           git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }} || echo "PUBLISHED=false" >> "$GITHUB_ENV"
@@ -427,7 +428,6 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           go run ./cmd/internal/build_libbox -target android -platform android/arm64
         env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       - name: Checkout main branch
         if: github.ref == 'refs/heads/stable' && github.event_name != 'workflow_dispatch'
@@ -483,7 +483,6 @@ jobs:
           grep -q 'include("arm64-v8a")' app/build.gradle.kts
           ./gradlew :app:assembleOtherRelease
         env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
       - name: Prepare upload
@@ -527,9 +526,10 @@ jobs:
         with:
           ndk-version: r28
       - name: Setup OpenJDK
-        run: |-
-          sudo apt update && sudo apt install -y openjdk-17-jdk-headless
-          /usr/lib/jvm/java-17-openjdk-amd64/bin/java --version
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
       - name: Set tag
         run: |-
           git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }} || echo "PUBLISHED=false" >> "$GITHUB_ENV"
@@ -540,7 +540,6 @@ jobs:
           export PATH="$PATH:$(go env GOPATH)/bin"
           make lib_android
         env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       - name: Checkout main branch
         if: github.ref == 'refs/heads/stable' && github.event_name != 'workflow_dispatch'
@@ -566,7 +565,6 @@ jobs:
           echo -n "$SERVICE_ACCOUNT_CREDENTIALS" | base64 --decode > service-account-credentials.json
           ./gradlew :app:publishPlayReleaseBundle
         env:
-          JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           LOCAL_PROPERTIES: ${{ secrets.LOCAL_PROPERTIES }}
           SERVICE_ACCOUNT_CREDENTIALS: ${{ secrets.SERVICE_ACCOUNT_CREDENTIALS }}
