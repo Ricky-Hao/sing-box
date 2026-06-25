@@ -30,6 +30,8 @@
 
 用于测试的链接。默认使用 `https://www.gstatic.com/generate_204`。
 
+使用 `tcp://host:port` 可以执行纯 TCP 连接探测，避免 HTTP 和 TLS 开销。
+
 #### interval
 
 测试间隔。 默认使用 `3m`。
