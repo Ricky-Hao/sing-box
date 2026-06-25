@@ -31,6 +31,8 @@ The order is used as priority from high to low. The first available outbound wil
 
 The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
 
+Use `tcp://host:port` to perform a pure TCP connect probe without HTTP or TLS overhead.
+
 #### interval
 
 The maximum health check budget. `3m` will be used if empty.
@@ -41,6 +43,8 @@ Fallback internally splits this value into probe scheduling time and probe timeo
 * probe scheduling time: `interval - probe timeout`
 
 This prevents one slow URL test from occupying the whole interval and blocking the next scheduled check.
+
+To reduce flapping on weak or switching networks without increasing failover time, scheduled background checks mark a failed outbound unavailable immediately, but require two consecutive successful background probes before failing back to a higher-priority recovered outbound. Forced checks and real connection failures still update availability immediately.
 
 #### idle_timeout
 
