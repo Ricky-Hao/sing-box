@@ -120,6 +120,30 @@ func (e *Endpoint) Ready() bool {
 	return e.ready.Load()
 }
 
+func (e *Endpoint) WaitReady(ctx context.Context) error {
+	if e.Ready() {
+		return nil
+	}
+	if !e.started.Load() {
+		return net.ErrClosed
+	}
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if e.Ready() {
+				return nil
+			}
+			if !e.started.Load() {
+				return net.ErrClosed
+			}
+		}
+	}
+}
+
 func (e *Endpoint) LocalAddresses() []netip.Prefix {
 	e.access.Lock()
 	defer e.access.Unlock()

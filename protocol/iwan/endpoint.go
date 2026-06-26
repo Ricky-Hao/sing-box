@@ -46,6 +46,8 @@ type Endpoint struct {
 	logger             logger.ContextLogger
 	endpoint           *iwan.Endpoint
 	started            atomic.Bool
+	endpointStarted    atomic.Bool
+	startAccess        sync.Mutex
 	localAddressAccess sync.RWMutex
 	localAddresses     []netip.Prefix
 	allowedIPs         []netip.Prefix
@@ -114,18 +116,18 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 }
 
 func (e *Endpoint) Start(stage adapter.StartStage) error {
-	if stage == adapter.StartStatePostStart {
-		err := e.endpoint.Start()
-		if err != nil {
-			return err
-		}
+	switch stage {
+	case adapter.StartStateStart:
 		e.started.Store(true)
+	case adapter.StartStatePostStart:
+		return e.startEndpoint()
 	}
 	return nil
 }
 
 func (e *Endpoint) Close() error {
 	e.started.Store(false)
+	e.endpointStarted.Store(false)
 	return e.endpoint.Close()
 }
 
@@ -213,8 +215,8 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 	case N.NetworkUDP:
 		e.logger.InfoContext(ctx, "outbound packet connection to ", destination)
 	}
-	if !e.ready() {
-		return nil, E.New("iWAN is not ready yet")
+	if err := e.waitReady(ctx); err != nil {
+		return nil, err
 	}
 	if destination.IsDomain() {
 		destinationAddresses, err := e.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
@@ -230,8 +232,8 @@ func (e *Endpoint) DialContext(ctx context.Context, network string, destination 
 
 func (e *Endpoint) ListenPacketWithDestination(ctx context.Context, destination M.Socksaddr) (net.PacketConn, netip.Addr, error) {
 	e.logger.InfoContext(ctx, "outbound packet connection to ", destination)
-	if !e.ready() {
-		return nil, netip.Addr{}, E.New("iWAN is not ready yet")
+	if err := e.waitReady(ctx); err != nil {
+		return nil, netip.Addr{}, err
 	}
 	if destination.IsDomain() {
 		destinationAddresses, err := e.dnsRouter.Lookup(ctx, destination.Fqdn, adapter.DNSQueryOptions{})
@@ -275,14 +277,61 @@ func (e *Endpoint) PreferredAddress(address netip.Addr) bool {
 }
 
 func (e *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	if !e.ready() {
-		return nil, E.New("iWAN is not ready yet")
+	ctx := e.ctx
+	var cancel context.CancelFunc
+	if timeout > 0 {
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+	if err := e.waitReady(ctx); err != nil {
+		return nil, err
 	}
 	return e.endpoint.NewDirectRouteConnection(metadata, routeContext, timeout)
 }
 
 func (e *Endpoint) ready() bool {
 	return e.started.Load() && e.endpoint.Ready()
+}
+
+func (e *Endpoint) waitReady(ctx context.Context) error {
+	if e.ready() {
+		return nil
+	}
+	if !e.started.Load() {
+		return E.New("iWAN is not ready yet")
+	}
+	if err := e.startEndpoint(); err != nil {
+		return E.Cause(err, "iWAN is not ready yet")
+	}
+	waitCtx := ctx
+	var cancel context.CancelFunc
+	if _, hasDeadline := waitCtx.Deadline(); !hasDeadline {
+		waitCtx, cancel = context.WithTimeout(ctx, C.StartTimeout)
+		defer cancel()
+	}
+	if err := e.endpoint.WaitReady(waitCtx); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+		return E.Cause(err, "iWAN is not ready yet")
+	}
+	return nil
+}
+
+func (e *Endpoint) startEndpoint() error {
+	if e.endpointStarted.Load() {
+		return nil
+	}
+	e.startAccess.Lock()
+	defer e.startAccess.Unlock()
+	if e.endpointStarted.Load() {
+		return nil
+	}
+	if err := e.endpoint.Start(); err != nil {
+		return err
+	}
+	e.endpointStarted.Store(true)
+	return nil
 }
 
 func (e *Endpoint) setLocalAddresses(addresses []netip.Prefix) {
