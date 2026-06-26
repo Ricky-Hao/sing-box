@@ -177,6 +177,47 @@ func TestEndpointDataTimeoutSendsClose(t *testing.T) {
 	}
 }
 
+func TestEndpointWaitReadyWaitsForOpenAck(t *testing.T) {
+	t.Parallel()
+	endpoint, server, cleanup := startTestEndpoint(t)
+	defer cleanup()
+
+	waitCtx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	ready := make(chan error, 1)
+	go func() {
+		ready <- endpoint.WaitReady(waitCtx)
+	}()
+
+	select {
+	case err := <-ready:
+		t.Fatalf("WaitReady returned before OPENACK: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	establishEndpoint(t, endpoint, server, [2]byte{0x12, 0x34}, [4]byte{0xde, 0xad, 0xbe, 0xef}, netip.MustParseAddr("10.20.30.40"))
+	select {
+	case err := <-ready:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitReady did not return after OPENACK")
+	}
+}
+
+func TestEndpointWaitReadyReturnsContextError(t *testing.T) {
+	t.Parallel()
+	endpoint, _, cleanup := startTestEndpoint(t)
+	defer cleanup()
+
+	waitCtx, cancel := context.WithTimeout(t.Context(), time.Nanosecond)
+	defer cancel()
+	if err := endpoint.WaitReady(waitCtx); err == nil {
+		t.Fatal("expected context error")
+	}
+}
+
 func TestStackDeviceReplacesLocalAddress(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
