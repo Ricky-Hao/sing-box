@@ -23,6 +23,8 @@ type IWANEndpointOptions struct {
 
 type IWANInboundOptions struct {
 	ListenOptions
+	System         bool                           `json:"system,omitempty"`
+	InterfaceName  string                         `json:"interface_name,omitempty"`
 	AddressPool    netip.Prefix                   `json:"address_pool"`
 	Username       string                         `json:"username,omitempty"`
 	Password       string                         `json:"password,omitempty"`

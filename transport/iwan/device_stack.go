@@ -75,6 +75,10 @@ func newStackDevice(options EndpointOptions) (*stackDevice, error) {
 	return device, nil
 }
 
+func (d *stackDevice) Start() error {
+	return nil
+}
+
 func (d *stackDevice) SetLocalAddress(prefix netip.Prefix) error {
 	addr := tun.AddressFromAddr(prefix.Addr())
 	protoAddr := tcpip.ProtocolAddress{
