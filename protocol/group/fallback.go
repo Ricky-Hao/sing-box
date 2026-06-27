@@ -34,6 +34,8 @@ var (
 	_ adapter.URLTestGroup  = (*Fallback)(nil)
 )
 
+const fallbackURLTestSuccessThreshold = 2
+
 type Fallback struct {
 	outbound.Adapter
 	ctx                          context.Context
@@ -138,7 +140,7 @@ func (s *Fallback) DialContext(ctx context.Context, network string, destination 
 		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	s.group.history.DeleteURLTestHistory(RealTag(outbound))
+	s.group.deleteURLTestHistory(RealTag(outbound))
 	s.group.performUpdateCheck()
 	return nil, err
 }
@@ -157,7 +159,7 @@ func (s *Fallback) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
 	}
 	s.logger.ErrorContext(ctx, err)
-	s.group.history.DeleteURLTestHistory(RealTag(outbound))
+	s.group.deleteURLTestHistory(RealTag(outbound))
 	s.group.performUpdateCheck()
 	return nil, err
 }
@@ -200,6 +202,8 @@ type FallbackGroup struct {
 	probeTimeout                 time.Duration
 	idleTimeout                  time.Duration
 	history                      adapter.URLTestHistoryStorage
+	urlTestSuccesses             map[string]uint8
+	urlTestSuccessesAccess       sync.Mutex
 	checking                     atomic.Bool
 	selectedOutboundTCP          adapter.Outbound
 	selectedOutboundUDP          adapter.Outbound
@@ -242,6 +246,7 @@ func NewFallbackGroup(ctx context.Context, outboundManager adapter.OutboundManag
 		probeTimeout:                 probeTimeout,
 		idleTimeout:                  idleTimeout,
 		history:                      history,
+		urlTestSuccesses:             make(map[string]uint8),
 		close:                        make(chan struct{}),
 		pause:                        service.FromContext[pause.Manager](ctx),
 		interruptGroup:               interrupt.NewGroup(),
@@ -288,11 +293,18 @@ func (g *FallbackGroup) Close() error {
 }
 
 func (g *FallbackGroup) Select(network string) (adapter.Outbound, bool) {
+	var current adapter.Outbound
+	switch network {
+	case N.NetworkTCP:
+		current = g.selectedOutboundTCP
+	case N.NetworkUDP:
+		current = g.selectedOutboundUDP
+	}
 	for _, detour := range g.outbounds {
 		if !common.Contains(detour.Network(), network) {
 			continue
 		}
-		if g.history.LoadURLTestHistory(RealTag(detour)) != nil {
+		if g.history.LoadURLTestHistory(RealTag(detour)) != nil && g.canSelect(detour, current) {
 			return detour, true
 		}
 	}
@@ -381,9 +393,10 @@ func (g *FallbackGroup) urlTest(ctx context.Context, force bool, skipRecentHisto
 			t, err := urltest.URLTest(testCtx, g.link, p)
 			if err != nil {
 				g.logger.Debug("outbound ", tag, " unavailable: ", err)
-				g.history.DeleteURLTestHistory(realTag)
+				g.deleteURLTestHistory(realTag)
 			} else {
 				g.logger.Debug("outbound ", tag, " available: ", t, "ms")
+				g.reportURLTestSuccess(realTag, force || skipRecentHistory)
 				g.history.StoreURLTestHistory(realTag, &adapter.URLTestHistory{
 					Time:  time.Now(),
 					Delay: t,
@@ -398,6 +411,58 @@ func (g *FallbackGroup) urlTest(ctx context.Context, force bool, skipRecentHisto
 	b.Wait()
 	g.performUpdateCheck()
 	return result, nil
+}
+
+func (g *FallbackGroup) deleteURLTestHistory(realTag string) {
+	g.clearURLTestSuccesses(realTag)
+	g.history.DeleteURLTestHistory(realTag)
+}
+
+func (g *FallbackGroup) reportURLTestSuccess(realTag string, immediate bool) {
+	g.urlTestSuccessesAccess.Lock()
+	defer g.urlTestSuccessesAccess.Unlock()
+	if immediate {
+		g.urlTestSuccesses[realTag] = fallbackURLTestSuccessThreshold
+		return
+	}
+	successes := g.urlTestSuccesses[realTag]
+	if successes < fallbackURLTestSuccessThreshold {
+		successes++
+	}
+	g.urlTestSuccesses[realTag] = successes
+}
+
+func (g *FallbackGroup) clearURLTestSuccesses(realTag string) {
+	g.urlTestSuccessesAccess.Lock()
+	delete(g.urlTestSuccesses, realTag)
+	g.urlTestSuccessesAccess.Unlock()
+}
+
+func (g *FallbackGroup) canSelect(candidate adapter.Outbound, current adapter.Outbound) bool {
+	if current == nil || candidate.Tag() == current.Tag() {
+		return true
+	}
+	if g.history.LoadURLTestHistory(RealTag(current)) == nil {
+		return true
+	}
+	candidateIndex := g.priorityIndex(candidate)
+	currentIndex := g.priorityIndex(current)
+	if candidateIndex == -1 || currentIndex == -1 || candidateIndex >= currentIndex {
+		return true
+	}
+	g.urlTestSuccessesAccess.Lock()
+	successes := g.urlTestSuccesses[RealTag(candidate)]
+	g.urlTestSuccessesAccess.Unlock()
+	return successes >= fallbackURLTestSuccessThreshold
+}
+
+func (g *FallbackGroup) priorityIndex(outbound adapter.Outbound) int {
+	for i, detour := range g.outbounds {
+		if detour.Tag() == outbound.Tag() {
+			return i
+		}
+	}
+	return -1
 }
 
 func (g *FallbackGroup) performUpdateCheck() {

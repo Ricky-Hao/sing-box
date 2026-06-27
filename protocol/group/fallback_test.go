@@ -158,6 +158,117 @@ func TestFallbackCheckOutboundsRefreshesRecentHistory(t *testing.T) {
 	}
 }
 
+func TestFallbackCheckOutboundsSupportsTCPURL(t *testing.T) {
+	t.Parallel()
+
+	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
+	group := newFallbackTestGroup(t, primary)
+	group.outbound = newFallbackTestOutboundManager(primary)
+	group.link = "tcp://example.com:443"
+
+	group.CheckOutbounds(false)
+
+	if primary.dialCount != 1 {
+		t.Fatalf("expected tcp probe to dial once, got %d", primary.dialCount)
+	}
+	if history := group.history.LoadURLTestHistory(RealTag(primary)); history == nil {
+		t.Fatal("expected tcp probe to store history")
+	}
+}
+
+func TestFallbackForceCheckDeletesRecentHistory(t *testing.T) {
+	t.Parallel()
+
+	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
+	group := newFallbackTestGroup(t, primary)
+	group.outbound = newFallbackTestOutboundManager(primary)
+	markFallbackTestHealthy(group, primary)
+
+	group.CheckOutbounds(true)
+
+	if history := group.history.LoadURLTestHistory(RealTag(primary)); history != nil {
+		t.Fatal("expected force check failure to delete recent history")
+	}
+}
+
+func TestFallbackPeriodicFailureSwitchesImmediately(t *testing.T) {
+	t.Parallel()
+
+	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
+	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
+	group := newFallbackTestGroup(t, primary, secondary)
+	markFallbackTestHealthy(group, primary)
+	markFallbackTestHealthy(group, secondary)
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != primary {
+		t.Fatalf("expected primary selected, got %s", group.selectedOutboundTCP.Tag())
+	}
+
+	group.deleteURLTestHistory(RealTag(primary))
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != secondary {
+		t.Fatalf("expected secondary after periodic failure, got %s", group.selectedOutboundTCP.Tag())
+	}
+}
+
+func TestFallbackPeriodicSuccessDebouncesFailback(t *testing.T) {
+	t.Parallel()
+
+	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
+	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
+	group := newFallbackTestGroup(t, primary, secondary)
+	markFallbackTestHealthy(group, primary)
+	markFallbackTestHealthy(group, secondary)
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != primary {
+		t.Fatalf("expected primary selected, got %s", group.selectedOutboundTCP.Tag())
+	}
+
+	group.deleteURLTestHistory(RealTag(primary))
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != secondary {
+		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
+	}
+
+	group.reportURLTestSuccess(RealTag(primary), false)
+	markFallbackTestHealthy(group, primary)
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != secondary {
+		t.Fatalf("expected secondary to stay selected after first primary recovery probe, got %s", group.selectedOutboundTCP.Tag())
+	}
+
+	group.reportURLTestSuccess(RealTag(primary), false)
+	markFallbackTestHealthy(group, primary)
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != primary {
+		t.Fatalf("expected primary after second primary recovery probe, got %s", group.selectedOutboundTCP.Tag())
+	}
+}
+
+func TestFallbackForceSuccessSwitchesBackImmediately(t *testing.T) {
+	t.Parallel()
+
+	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
+	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
+	group := newFallbackTestGroup(t, primary, secondary)
+	markFallbackTestHealthy(group, primary)
+	markFallbackTestHealthy(group, secondary)
+	group.performUpdateCheck()
+
+	group.deleteURLTestHistory(RealTag(primary))
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != secondary {
+		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
+	}
+
+	group.reportURLTestSuccess(RealTag(primary), true)
+	markFallbackTestHealthy(group, primary)
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != primary {
+		t.Fatalf("expected primary after forced recovery probe, got %s", group.selectedOutboundTCP.Tag())
+	}
+}
+
 func TestFallbackProbeTimingFitsInterval(t *testing.T) {
 	t.Parallel()
 
@@ -221,7 +332,7 @@ func TestFallbackSelectFiltersByNetwork(t *testing.T) {
 	}
 }
 
-func TestFallbackUpdateSwitchesDownAndBackUp(t *testing.T) {
+func TestFallbackUpdateSwitchesDownAndBackUpAfterStableRecovery(t *testing.T) {
 	t.Parallel()
 
 	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
@@ -235,16 +346,24 @@ func TestFallbackUpdateSwitchesDownAndBackUp(t *testing.T) {
 		t.Fatalf("expected primary selected, got %s", group.selectedOutboundTCP.Tag())
 	}
 
-	group.history.DeleteURLTestHistory(RealTag(primary))
+	group.deleteURLTestHistory(RealTag(primary))
 	group.performUpdateCheck()
 	if group.selectedOutboundTCP != secondary {
 		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
 	}
 
+	group.reportURLTestSuccess(RealTag(primary), false)
+	markFallbackTestHealthy(group, primary)
+	group.performUpdateCheck()
+	if group.selectedOutboundTCP != secondary {
+		t.Fatalf("expected secondary to stay selected after first primary recovery probe, got %s", group.selectedOutboundTCP.Tag())
+	}
+
+	group.reportURLTestSuccess(RealTag(primary), false)
 	markFallbackTestHealthy(group, primary)
 	group.performUpdateCheck()
 	if group.selectedOutboundTCP != primary {
-		t.Fatalf("expected primary after recovery, got %s", group.selectedOutboundTCP.Tag())
+		t.Fatalf("expected primary after stable recovery, got %s", group.selectedOutboundTCP.Tag())
 	}
 }
 
@@ -259,13 +378,13 @@ func TestFallbackUpdateKeepsCurrentWhenAllUnhealthyThenSwitchesBack(t *testing.T
 	markFallbackTestHealthy(group, secondary)
 	group.performUpdateCheck()
 
-	group.history.DeleteURLTestHistory(RealTag(primary))
+	group.deleteURLTestHistory(RealTag(primary))
 	group.performUpdateCheck()
 	if group.selectedOutboundTCP != secondary {
 		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
 	}
 
-	group.history.DeleteURLTestHistory(RealTag(secondary))
+	group.deleteURLTestHistory(RealTag(secondary))
 	group.performUpdateCheck()
 	if group.selectedOutboundTCP != secondary {
 		t.Fatalf("expected current selection to stay on secondary while all outbounds are unhealthy, got %s", group.selectedOutboundTCP.Tag())
@@ -297,7 +416,7 @@ func TestFallbackUpdateInterruptsConnectionsOnSwitch(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	group.history.DeleteURLTestHistory(RealTag(primary))
+	group.deleteURLTestHistory(RealTag(primary))
 	group.performUpdateCheck()
 
 	if group.selectedOutboundTCP != secondary {
