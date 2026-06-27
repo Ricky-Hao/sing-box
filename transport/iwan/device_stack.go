@@ -54,8 +54,8 @@ func newStackDevice(options EndpointOptions) (*stackDevice, error) {
 	device := &stackDevice{
 		ctx:            options.Context,
 		logger:         options.Logger,
-		outbound:       make(chan *stack.PacketBuffer, 256),
-		packetOutbound: make(chan *buf.Buffer, 256),
+		outbound:       make(chan *stack.PacketBuffer, linkQueueSize),
+		packetOutbound: make(chan *buf.Buffer, linkQueueSize),
 		done:           make(chan struct{}),
 	}
 	device.mtu.Store(options.MTU)

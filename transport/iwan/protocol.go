@@ -41,6 +41,8 @@ const (
 	fragmentBufferSize = 2048
 	fragmentOutputSize = 4096
 	fragmentTimeout    = 5 * time.Second
+	linkQueueSize      = 1024
+	udpSocketBuffer    = 4 * 1024 * 1024
 )
 
 type endpointState uint8
@@ -244,11 +246,7 @@ func buildOpenRejectPacket() []byte {
 }
 
 func buildEchoResponsePacket(request []byte) []byte {
-	length := signedHeader
-	if len(request) > signedHeader {
-		length = len(request)
-	}
-	packet := make([]byte, length)
+	packet := make([]byte, max(signedHeader, len(request)))
 	packet[0] = packetEchoResp
 	if len(request) >= headerSize {
 		packet[1] = request[1]
