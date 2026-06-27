@@ -32,6 +32,7 @@
 | `vless`       | [VLESS](./vless/)             | TCP              |
 | `anytls`      | [AnyTLS](./anytls/)           | TCP              |
 | `tun`         | [Tun](./tun/)                 | :material-close: |
+| `iwan`        | [iWAN](./iwan/)               | :material-close: |
 | `redirect`    | [Redirect](./redirect/)       | :material-close: |
 | `tproxy`      | [TProxy](./tproxy/)           | :material-close: |
 

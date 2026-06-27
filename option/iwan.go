@@ -20,3 +20,21 @@ type IWANEndpointOptions struct {
 	ServerOptions
 	DialerOptions
 }
+
+type IWANInboundOptions struct {
+	ListenOptions
+	AddressPool    netip.Prefix                   `json:"address_pool"`
+	Username       string                         `json:"username,omitempty"`
+	Password       string                         `json:"password,omitempty"`
+	Users          []IWANInboundUser              `json:"users,omitempty"`
+	MTU            uint32                         `json:"mtu,omitempty"`
+	Encrypt        bool                           `json:"encrypt,omitempty"`
+	DNS            badoption.Listable[netip.Addr] `json:"dns,omitempty"`
+	SessionTimeout badoption.Duration             `json:"session_timeout,omitempty"`
+}
+
+type IWANInboundUser struct {
+	Username string     `json:"username"`
+	Password string     `json:"password"`
+	Address  netip.Addr `json:"address,omitempty"`
+}
