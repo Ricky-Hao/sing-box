@@ -63,6 +63,15 @@ type openAckInfo struct {
 	encrypt    uint8
 }
 
+type openInfo struct {
+	mtu           uint16
+	username      string
+	passwordBlock [16]byte
+	encrypt       bool
+	pipeID        uint16
+	pipeIndex     uint8
+}
+
 func signPacket(packet []byte) {
 	digest := md5.New()
 	digest.Write(packet[:headerSize])
@@ -142,6 +151,115 @@ func buildOpenPacket(username string, password string, mtu uint32, encrypt bool,
 func appendTLV(packet []byte, tlvType byte, value ...byte) []byte {
 	packet = append(packet, tlvType, byte(len(value)+2))
 	return append(packet, value...)
+}
+
+func parseOpenPacket(packet []byte) (openInfo, error) {
+	if len(packet) < signedHeader {
+		return openInfo{}, E.New("short OPEN")
+	}
+	if !verifyPacket(packet) {
+		return openInfo{}, E.New("invalid OPEN signature")
+	}
+	info := openInfo{
+		mtu:     defaultMTU,
+		encrypt: packet[1] != 0,
+	}
+	tlvs := packet[signedHeader:]
+	for len(tlvs) > 0 {
+		if len(tlvs) < 2 {
+			break
+		}
+		tlvType := tlvs[0]
+		tlvLength := int(tlvs[1])
+		if tlvLength < 2 || tlvLength > len(tlvs) {
+			break
+		}
+		value := tlvs[2:tlvLength]
+		switch tlvType {
+		case 1:
+			info.username = string(value)
+		case 2:
+			if len(value) >= len(info.passwordBlock) {
+				copy(info.passwordBlock[:], value[:len(info.passwordBlock)])
+			}
+		case 3:
+			if len(value) >= 2 {
+				info.mtu = binary.BigEndian.Uint16(value[:2])
+			}
+		case 8:
+			info.encrypt = len(value) > 0 && value[0] != 0
+		case 0x0a:
+			if len(value) >= 2 {
+				pipe := binary.BigEndian.Uint16(value[:2])
+				info.pipeID = pipe & 0x7fff
+				info.pipeIndex = uint8(pipe >> 15)
+			}
+		}
+		tlvs = tlvs[tlvLength:]
+	}
+	if info.username == "" {
+		return openInfo{}, E.New("OPEN missing username")
+	}
+	if info.passwordBlock == ([16]byte{}) {
+		return openInfo{}, E.New("OPEN missing password")
+	}
+	if info.mtu < minMTU || info.mtu > maxMTU {
+		return openInfo{}, E.New("invalid OPEN MTU: ", info.mtu)
+	}
+	return info, nil
+}
+
+func buildOpenAckPacket(token [2]byte, sessionID [4]byte, mtu uint32, address netip.Addr, encrypt bool, dns []netip.Addr) []byte {
+	packet := make([]byte, signedHeader, 64)
+	packet[0] = packetOpenAck
+	if encrypt {
+		packet[1] = 1
+	}
+	copy(packet[2:4], token[:])
+	copy(packet[4:8], sessionID[:])
+	signPacket(packet)
+	packet = appendTLV(packet, 3, byte(mtu>>8), byte(mtu))
+	addressBytes := address.As4()
+	packet = appendTLV(packet, 4, addressBytes[:]...)
+	if len(dns) > 0 && dns[0].Is4() {
+		dns0 := dns[0].As4()
+		packet = appendTLV(packet, 5, dns0[:]...)
+	}
+	if len(dns) > 1 && dns[0].Is4() && dns[1].Is4() {
+		dns0 := dns[0].As4()
+		dns1 := dns[1].As4()
+		packet = appendTLV(packet, 6, append(dns0[:], dns1[:]...)...)
+	}
+	if encrypt {
+		packet = appendTLV(packet, 8, 1)
+	}
+	return packet
+}
+
+func buildOpenRejectPacket() []byte {
+	packet := make([]byte, signedHeader)
+	packet[0] = packetOpenReject
+	signPacket(packet)
+	return packet
+}
+
+func buildEchoResponsePacket(request []byte) []byte {
+	length := signedHeader
+	if len(request) > signedHeader {
+		length = len(request)
+	}
+	packet := make([]byte, length)
+	packet[0] = packetEchoResp
+	if len(request) >= headerSize {
+		packet[1] = request[1]
+		copy(packet[2:4], request[2:4])
+		copy(packet[4:8], request[4:8])
+	}
+	signPacket(packet)
+	if len(request) > signedHeader {
+		copy(packet[signedHeader:], request[signedHeader:])
+	}
+	return packet
 }
 
 func parseOpenAck(packet []byte) (openAckInfo, error) {
