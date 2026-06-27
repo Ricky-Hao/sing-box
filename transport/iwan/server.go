@@ -183,6 +183,7 @@ func (s *Server) Start(conn net.PacketConn) error {
 	if s.started.Swap(true) {
 		return nil
 	}
+	setUDPSocketBuffer(s.options.Logger, conn)
 	s.access.Lock()
 	s.conn = conn
 	s.access.Unlock()

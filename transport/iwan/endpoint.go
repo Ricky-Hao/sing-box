@@ -104,6 +104,7 @@ func (e *Endpoint) Start() error {
 		e.started.Store(false)
 		return err
 	}
+	setUDPSocketBuffer(e.options.Logger, conn)
 	e.access.Lock()
 	e.conn = conn
 	e.state = stateAuthSent
@@ -563,6 +564,7 @@ func (e *Endpoint) reconnect(now time.Time) error {
 		_ = conn.Close()
 		return net.ErrClosed
 	}
+	setUDPSocketBuffer(e.options.Logger, conn)
 	e.access.Lock()
 	if e.ctx.Err() != nil || !e.started.Load() {
 		e.access.Unlock()

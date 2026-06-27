@@ -41,6 +41,8 @@ const (
 	fragmentBufferSize = 2048
 	fragmentOutputSize = 4096
 	fragmentTimeout    = 5 * time.Second
+	linkQueueSize      = 1024
+	udpSocketBuffer    = 4 * 1024 * 1024
 )
 
 type endpointState uint8
