@@ -244,11 +244,7 @@ func buildOpenRejectPacket() []byte {
 }
 
 func buildEchoResponsePacket(request []byte) []byte {
-	length := signedHeader
-	if len(request) > signedHeader {
-		length = len(request)
-	}
-	packet := make([]byte, length)
+	packet := make([]byte, max(signedHeader, len(request)))
 	packet[0] = packetEchoResp
 	if len(request) >= headerSize {
 		packet[1] = request[1]
