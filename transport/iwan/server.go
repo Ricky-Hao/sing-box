@@ -14,23 +14,28 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
 type ServerOptions struct {
-	Context        context.Context
-	Logger         logger.ContextLogger
-	Handler        tun.Handler
-	UDPTimeout     time.Duration
-	ICMPTimeout    time.Duration
-	AddressPool    netip.Prefix
-	Users          []ServerUser
-	MTU            uint32
-	Encrypt        bool
-	DNS            []netip.Addr
-	SessionTimeout time.Duration
+	Context          context.Context
+	Logger           logger.ContextLogger
+	Handler          tun.Handler
+	UDPTimeout       time.Duration
+	ICMPTimeout      time.Duration
+	AddressPool      netip.Prefix
+	Users            []ServerUser
+	MTU              uint32
+	Encrypt          bool
+	DNS              []netip.Addr
+	SessionTimeout   time.Duration
+	System           bool
+	InterfaceName    string
+	InterfaceMonitor tun.DefaultInterfaceMonitor
+	InterfaceFinder  control.InterfaceFinder
 }
 
 type ServerUser struct {
@@ -39,12 +44,19 @@ type ServerUser struct {
 	Address  netip.Addr
 }
 
+type serverDevice interface {
+	Start() error
+	Read(packet []byte) (int, error)
+	Write(packet []byte) error
+	Close() error
+}
+
 type Server struct {
 	options ServerOptions
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	device *stackDevice
+	device serverDevice
 	conn   net.PacketConn
 
 	started     atomic.Bool
@@ -163,14 +175,20 @@ func NewServer(options ServerOptions) (*Server, error) {
 		user.address = address
 		server.users[username] = user
 	}
-	device, err := newStackDevice(EndpointOptions{
-		Context:     ctx,
-		Logger:      options.Logger,
-		Handler:     options.Handler,
-		UDPTimeout:  options.UDPTimeout,
-		ICMPTimeout: options.ICMPTimeout,
-		MTU:         options.MTU,
-	})
+	var device serverDevice
+	var err error
+	if options.System {
+		device, err = newSystemTunDevice(options)
+	} else {
+		device, err = newStackDevice(EndpointOptions{
+			Context:     ctx,
+			Logger:      options.Logger,
+			Handler:     options.Handler,
+			UDPTimeout:  options.UDPTimeout,
+			ICMPTimeout: options.ICMPTimeout,
+			MTU:         options.MTU,
+		})
+	}
 	if err != nil {
 		cancel()
 		return nil, err
@@ -184,6 +202,11 @@ func (s *Server) Start(conn net.PacketConn) error {
 		return nil
 	}
 	setUDPSocketBuffer(s.options.Logger, conn)
+	if err := s.device.Start(); err != nil {
+		s.started.Store(false)
+		_ = conn.Close()
+		return err
+	}
 	s.access.Lock()
 	s.conn = conn
 	s.access.Unlock()

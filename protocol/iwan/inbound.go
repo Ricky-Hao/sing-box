@@ -21,6 +21,7 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
+	"github.com/sagernet/sing/service"
 )
 
 func RegisterInbound(registry *inbound.Registry) {
@@ -85,6 +86,16 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	if options.SessionTimeout != 0 {
 		sessionTimeout = time.Duration(options.SessionTimeout)
 	}
+	var networkManager adapter.NetworkManager
+	if options.System {
+		networkManager = service.FromContext[adapter.NetworkManager](ctx)
+		if networkManager == nil {
+			return nil, E.New("missing network manager for iWAN system mode")
+		}
+		if networkManager.InterfaceMonitor() == nil {
+			return nil, E.New("missing interface monitor for iWAN system mode")
+		}
+	}
 	i := &Inbound{
 		Adapter: inbound.NewAdapter(C.TypeIWAN, tag),
 		ctx:     ctx,
@@ -96,7 +107,7 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 			Listen:  options.ListenOptions,
 		}),
 	}
-	server, err := iwan.NewServer(iwan.ServerOptions{
+	serverOptions := iwan.ServerOptions{
 		Context:        ctx,
 		Logger:         logger,
 		Handler:        i,
@@ -108,7 +119,14 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 		Encrypt:        options.Encrypt,
 		DNS:            dns,
 		SessionTimeout: sessionTimeout,
-	})
+		System:         options.System,
+		InterfaceName:  options.InterfaceName,
+	}
+	if options.System {
+		serverOptions.InterfaceMonitor = networkManager.InterfaceMonitor()
+		serverOptions.InterfaceFinder = networkManager.InterfaceFinder()
+	}
+	server, err := iwan.NewServer(serverOptions)
 	if err != nil {
 		return nil, err
 	}
