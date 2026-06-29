@@ -51,6 +51,10 @@ type serverBatchDevice interface {
 	ReadBatch(packets [][]byte, packetSizes []int) (int, error)
 }
 
+type serverPayloadDevice interface {
+	ReadPayloadBatch(payloads []serverOutboundPayload) (int, error)
+}
+
 type Server struct {
 	options ServerOptions
 	ctx     context.Context
@@ -99,6 +103,8 @@ type serverOutboundPacket struct {
 	xorKey    [8]byte
 	encrypt   bool
 	payload   []byte
+	views     [][]byte
+	size      int
 }
 
 func NewServer(options ServerOptions) (*Server, error) {
@@ -292,6 +298,10 @@ func (s *Server) readUDPConnLoop(conn *net.UDPConn) {
 }
 
 func (s *Server) deviceLoop() {
+	if payloadDevice, ok := s.device.(serverPayloadDevice); ok {
+		s.devicePayloadLoop(payloadDevice)
+		return
+	}
 	if batchDevice, ok := s.device.(serverBatchDevice); ok {
 		s.deviceBatchLoop(batchDevice)
 		return
@@ -340,6 +350,65 @@ func (s *Server) deviceLoop() {
 		}, packetBuffer)
 		if err != nil {
 			s.options.Logger.Error(E.Cause(err, "write iWAN server data packet"))
+		}
+	}
+}
+
+func (s *Server) devicePayloadLoop(device serverPayloadDevice) {
+	payloads := make([]serverOutboundPayload, udpBatchSize)
+	packetBuffers := make([][]byte, udpBatchSize)
+	packets := make([]serverOutboundPacket, 0, udpBatchSize)
+	for index := range packetBuffers {
+		packetBuffers[index] = make([]byte, headerSize+fragmentOutputSize)
+	}
+	for {
+		payloadCount, err := device.ReadPayloadBatch(payloads)
+		if err != nil {
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
+			}
+			s.options.Logger.Error(E.Cause(err, "read iWAN server stack packet"))
+			return
+		}
+		packets = packets[:0]
+		var conn net.PacketConn
+		for index := range payloadCount {
+			payload := &payloads[index]
+			destination, ok := payload.destination()
+			if !ok {
+				continue
+			}
+			s.access.Lock()
+			session := s.byAddress[destination]
+			if session == nil {
+				s.access.Unlock()
+				s.options.Logger.Debug("drop iWAN server packet to unknown tunnel address ", destination)
+				continue
+			}
+			packetConn := s.conn
+			packets = append(packets, serverOutboundPacket{
+				remote:    session.remote,
+				token:     session.token,
+				sessionID: session.sessionID,
+				xorKey:    session.xorKey,
+				encrypt:   session.encrypt,
+				views:     payload.views,
+				size:      payload.size,
+			})
+			s.access.Unlock()
+			if conn == nil {
+				conn = packetConn
+			}
+		}
+		if conn != nil && len(packets) > 0 {
+			if err = s.writeDataPacketsTo(conn, packets, packetBuffers); err != nil {
+				s.options.Logger.Error(E.Cause(err, "write iWAN server data packet"))
+			}
+		}
+		for index := range payloadCount {
+			payloads[index].release()
 		}
 	}
 }
@@ -654,7 +723,7 @@ func (s *Server) writePacketTo(conn net.PacketConn, remote netip.AddrPort, packe
 }
 
 func (s *Server) writeDataPacketTo(conn net.PacketConn, outboundPacket serverOutboundPacket, packet []byte) ([]byte, error) {
-	if !outboundPacket.encrypt {
+	if !outboundPacket.encrypt && len(outboundPacket.views) == 0 {
 		err := s.writeDataPacketVectorTo(conn, outboundPacket.remote, outboundPacket.token, outboundPacket.sessionID, outboundPacket.payload)
 		if err == nil {
 			return packet, nil
@@ -663,7 +732,7 @@ func (s *Server) writeDataPacketTo(conn net.PacketConn, outboundPacket serverOut
 			return packet, err
 		}
 	}
-	packet = buildDataPacket(outboundPacket.token, outboundPacket.sessionID, outboundPacket.xorKey, outboundPacket.encrypt, outboundPacket.payload, packet)
+	packet = buildDataPacketFromOutbound(outboundPacket, packet)
 	return packet, s.writePacketTo(conn, outboundPacket.remote, packet)
 }
 
@@ -677,7 +746,7 @@ func (s *Server) writeDataPacketsTo(conn net.PacketConn, packets []serverOutboun
 	}
 	for index := sent; index < len(packets); index++ {
 		packetBuffer := packetBuffers[index]
-		packetBuffer = buildDataPacket(packets[index].token, packets[index].sessionID, packets[index].xorKey, packets[index].encrypt, packets[index].payload, packetBuffer)
+		packetBuffer = buildDataPacketFromOutbound(packets[index], packetBuffer)
 		packetBuffers[index] = packetBuffer
 		if err = s.writePacketTo(conn, packets[index].remote, packetBuffer); err != nil {
 			if firstErr == nil {
@@ -686,6 +755,41 @@ func (s *Server) writeDataPacketsTo(conn net.PacketConn, packets []serverOutboun
 		}
 	}
 	return firstErr
+}
+
+func buildDataPacketFromOutbound(packetInfo serverOutboundPacket, packet []byte) []byte {
+	if len(packetInfo.views) == 0 {
+		return buildDataPacket(packetInfo.token, packetInfo.sessionID, packetInfo.xorKey, packetInfo.encrypt, packetInfo.payload, packet)
+	}
+	packetSize := headerSize + packetInfo.payloadSize()
+	if cap(packet) < packetSize {
+		packet = make([]byte, packetSize)
+	} else {
+		packet = packet[:packetSize]
+	}
+	fillDataPacketHeader(packet, packetInfo.token, packetInfo.sessionID, packetInfo.encrypt)
+	offset := headerSize
+	for _, view := range packetInfo.views {
+		offset += copy(packet[offset:], view)
+	}
+	if packetInfo.encrypt {
+		xorData(packetInfo.xorKey, packet[headerSize:])
+	}
+	return packet
+}
+
+func (p serverOutboundPacket) payloadSize() int {
+	if len(p.views) == 0 {
+		return len(p.payload)
+	}
+	if p.size != 0 {
+		return p.size
+	}
+	var size int
+	for _, view := range p.views {
+		size += len(view)
+	}
+	return size
 }
 
 func (s *Server) recvElapsedNano() int64 {
