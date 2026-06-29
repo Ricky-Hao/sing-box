@@ -8,8 +8,6 @@
   "tag": "iwan-in",
   "listen": "::",
   "listen_port": 4567,
-  "system": false,
-  "interface_name": "iwan0",
   "address_pool": "10.66.0.0/24",
   "users": [
     {
@@ -26,8 +24,6 @@ iWAN 入站接受 iWAN endpoint 客户端，并像 TUN 入站一样把数据交�
 
 客户端应继续在 `endpoints` 中使用 iWAN endpoint。
 
-在 Linux 上，`system: true` 会启用 iWAN 服务端 system TUN 路径。DATA 包会解封装后写入内核 TUN 接口，回包从 TUN 接口读出后再封装回对应 iWAN session。该模式会绕过 sing-box 路由规则；如果客户端需要访问本机服务之外的网络，宿主机需要自行配置转发、防火墙和 NAT。
-
 ### 字段
 
 #### listen
@@ -39,18 +35,6 @@ iWAN 入站接受 iWAN endpoint 客户端，并像 TUN 入站一样把数据交�
 监听端口。
 
 默认值为 `4567`。
-
-#### system
-
-启用 Linux system TUN 服务端模式。
-
-启用后数据包会绕过 sing-box 路由规则。进程需要具备创建 TUN 接口的权限，宿主机也需要按预期配置 L3 转发/NAT。
-
-#### interface_name
-
-Linux system TUN 接口名称。
-
-默认会选择未使用的 `iwan` 前缀接口名。
 
 #### address_pool
 
@@ -134,7 +118,6 @@ iWAN 隧道 MTU。
 ### 限制
 
 - 需要 `with_iwan` 和 `with_gvisor` 构建标签。
-- `system` 模式仅支持 Linux iWAN 入站服务端。
 - 仅支持 IPv4 隧道地址分配。
 - 不支持段路由和发送方向分片。
 - 不保证兼容第三方 iWAN 客户端。

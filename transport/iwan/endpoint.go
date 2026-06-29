@@ -214,9 +214,7 @@ func (e *Endpoint) readLoop(conn net.Conn) {
 			}
 			return
 		}
-		packet := make([]byte, n)
-		copy(packet, buffer[:n])
-		if e.handlePacket(conn, packet) {
+		if e.handlePacket(conn, buffer[:n]) {
 			e.access.Lock()
 			if e.conn == conn {
 				e.lastRecv = time.Now()
@@ -228,6 +226,7 @@ func (e *Endpoint) readLoop(conn net.Conn) {
 
 func (e *Endpoint) deviceLoop() {
 	buffer := make([]byte, fragmentOutputSize)
+	packetBuffer := make([]byte, headerSize+fragmentOutputSize)
 	for {
 		n, err := e.device.Read(buffer)
 		if err != nil {
@@ -250,18 +249,7 @@ func (e *Endpoint) deviceLoop() {
 		sessionID := e.sessionID
 		xorKey := e.xorKey
 		e.access.Unlock()
-		packet := make([]byte, headerSize+n)
-		if encrypt {
-			packet[0] = packetDataEnc
-			packet[1] = 1
-			copy(packet[headerSize:], buffer[:n])
-			xorData(xorKey, packet[headerSize:])
-		} else {
-			packet[0] = packetData
-			copy(packet[headerSize:], buffer[:n])
-		}
-		copy(packet[2:4], token[:])
-		copy(packet[4:8], sessionID[:])
+		packet := buildDataPacket(token, sessionID, xorKey, encrypt, buffer[:n], packetBuffer)
 		if err = e.writePacketTo(conn, packet); err != nil && e.isCurrentConn(conn) {
 			e.options.Logger.Error(E.Cause(err, "write iWAN data packet"))
 		}
@@ -451,8 +439,7 @@ func (e *Endpoint) handleData(conn net.Conn, packet []byte) bool {
 	}
 	xorKey := e.xorKey
 	e.access.Unlock()
-	payload := make([]byte, len(packet)-headerSize)
-	copy(payload, packet[headerSize:])
+	payload := packet[headerSize:]
 	if packet[0] == packetDataEnc {
 		xorData(xorKey, payload)
 	}

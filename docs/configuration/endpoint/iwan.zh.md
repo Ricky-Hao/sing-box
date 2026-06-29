@@ -6,7 +6,7 @@
 
 !!! warning ""
 
-    当前版本的 iWAN 仅支持用户态 stack 模式。暂不支持 `system` TUN 模式和 segment routing。
+    当前版本的 iWAN 使用用户态 stack。暂不支持 segment routing。
 
 ### 版本范围
 
@@ -20,7 +20,6 @@
 
 这不是 iwand daemon 的 1:1 替代品。当前版本有意不包含以下 iwand 功能：
 
-- 创建系统 TUN 网卡和管理系统路由
 - segment routing（`SEGRT`）和 segment-routing IP fragment（`IPFRAG_SR`）
 - `up_script` 和 `down_script` hook
 - 将 OPENACK 中的 DNS 服务器应用到系统解析器
@@ -106,10 +105,6 @@ OPENACK 后，sing-box 会使用配置 MTU 和服务器 MTU 中较小的有效�
 #### udp_timeout
 
 用户态 stack 的 UDP 超时时间。
-
-#### system
-
-暂不支持。如果设置为 `true`，sing-box 会返回错误。请保持未设置或设置为 `false`。
 
 ### 拨号字段
 

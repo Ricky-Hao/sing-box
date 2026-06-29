@@ -8,8 +8,6 @@
   "tag": "iwan-in",
   "listen": "::",
   "listen_port": 4567,
-  "system": false,
-  "interface_name": "iwan0",
   "address_pool": "10.66.0.0/24",
   "users": [
     {
@@ -26,8 +24,6 @@ The iWAN inbound accepts iWAN endpoint clients and routes packets through sing-b
 
 The client side should use the iWAN endpoint in `endpoints`.
 
-On Linux, `system: true` enables the iWAN server system TUN path. DATA packets are decapsulated into a kernel TUN interface, and return packets read from the TUN interface are encapsulated back to the owning iWAN session. This bypasses sing-box routing and requires the host system to provide forwarding, firewall, and NAT policy when clients need access beyond local services.
-
 ### Fields
 
 #### listen
@@ -39,18 +35,6 @@ Listen address.
 Listen port.
 
 Default is `4567`.
-
-#### system
-
-Enable Linux system TUN server mode.
-
-When enabled, packets bypass sing-box routing rules. The process needs permission to create a TUN interface, and the host must be configured for the intended L3 forwarding/NAT behavior.
-
-#### interface_name
-
-Linux system TUN interface name.
-
-By default, an unused name with the `iwan` prefix is selected.
 
 #### address_pool
 
@@ -134,7 +118,6 @@ By default, the iWAN data timeout is used.
 ### Limitations
 
 - Requires `with_iwan` and `with_gvisor` build tags.
-- `system` mode is only supported for iWAN inbound servers on Linux.
 - IPv4 tunnel address assignment only.
 - Segment routing and transmit fragmentation are not supported.
 - Third-party iWAN client compatibility is not guaranteed.
