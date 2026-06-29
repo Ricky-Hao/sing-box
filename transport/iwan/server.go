@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/binary"
+	"errors"
 	"net"
 	"net/netip"
 	"sync"
@@ -14,28 +15,23 @@ import (
 	"time"
 
 	"github.com/sagernet/sing-tun"
-	"github.com/sagernet/sing/common/control"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 )
 
 type ServerOptions struct {
-	Context          context.Context
-	Logger           logger.ContextLogger
-	Handler          tun.Handler
-	UDPTimeout       time.Duration
-	ICMPTimeout      time.Duration
-	AddressPool      netip.Prefix
-	Users            []ServerUser
-	MTU              uint32
-	Encrypt          bool
-	DNS              []netip.Addr
-	SessionTimeout   time.Duration
-	System           bool
-	InterfaceName    string
-	InterfaceMonitor tun.DefaultInterfaceMonitor
-	InterfaceFinder  control.InterfaceFinder
+	Context        context.Context
+	Logger         logger.ContextLogger
+	Handler        tun.Handler
+	UDPTimeout     time.Duration
+	ICMPTimeout    time.Duration
+	AddressPool    netip.Prefix
+	Users          []ServerUser
+	MTU            uint32
+	Encrypt        bool
+	DNS            []netip.Addr
+	SessionTimeout time.Duration
 }
 
 type ServerUser struct {
@@ -62,6 +58,8 @@ type Server struct {
 	started     atomic.Bool
 	access      sync.Mutex
 	writeAccess sync.Mutex
+	startTime   time.Time
+	nowElapsed  atomic.Int64
 	users       map[string]serverUser
 	byRemote    map[netip.AddrPort]*serverSession
 	byAddress   map[netip.Addr]*serverSession
@@ -84,9 +82,11 @@ type serverSession struct {
 	sessionID [4]byte
 	xorKey    [8]byte
 	encrypt   bool
-	lastRecv  time.Time
+	lastRecv  atomic.Int64
 	fragments fragmentReassembler
 }
+
+var errUnsupportedVectorWrite = errors.New("unsupported vector write")
 
 func NewServer(options ServerOptions) (*Server, error) {
 	if options.MTU == 0 {
@@ -119,6 +119,7 @@ func NewServer(options ServerOptions) (*Server, error) {
 		byUsername:  make(map[string]*serverSession),
 		addressUser: make(map[netip.Addr]string),
 		poolBase:    ipv4ToUint32(options.AddressPool.Masked().Addr()),
+		startTime:   time.Now(),
 	}
 	userOrder := make([]string, 0, len(options.Users))
 	for _, user := range options.Users {
@@ -175,20 +176,14 @@ func NewServer(options ServerOptions) (*Server, error) {
 		user.address = address
 		server.users[username] = user
 	}
-	var device serverDevice
-	var err error
-	if options.System {
-		device, err = newSystemTunDevice(options)
-	} else {
-		device, err = newStackDevice(EndpointOptions{
-			Context:     ctx,
-			Logger:      options.Logger,
-			Handler:     options.Handler,
-			UDPTimeout:  options.UDPTimeout,
-			ICMPTimeout: options.ICMPTimeout,
-			MTU:         options.MTU,
-		})
-	}
+	device, err := newStackDevice(EndpointOptions{
+		Context:     ctx,
+		Logger:      options.Logger,
+		Handler:     options.Handler,
+		UDPTimeout:  options.UDPTimeout,
+		ICMPTimeout: options.ICMPTimeout,
+		MTU:         options.MTU,
+	})
 	if err != nil {
 		cancel()
 		return nil, err
@@ -201,6 +196,8 @@ func (s *Server) Start(conn net.PacketConn) error {
 	if s.started.Swap(true) {
 		return nil
 	}
+	s.startTime = time.Now()
+	s.nowElapsed.Store(0)
 	setUDPSocketBuffer(s.options.Logger, conn)
 	if err := s.device.Start(); err != nil {
 		s.started.Store(false)
@@ -240,6 +237,10 @@ func (s *Server) UserByAddress(address netip.Addr) string {
 }
 
 func (s *Server) readLoop(conn net.PacketConn) {
+	if udpConn, ok := conn.(*net.UDPConn); ok {
+		s.readUDPConnLoop(udpConn)
+		return
+	}
 	buffer := make([]byte, fragmentOutputSize)
 	for {
 		n, addr, err := conn.ReadFrom(buffer)
@@ -253,20 +254,30 @@ func (s *Server) readLoop(conn net.PacketConn) {
 			return
 		}
 		remote := M.SocksaddrFromNet(addr).Unwrap().AddrPort()
-		packet := make([]byte, n)
-		copy(packet, buffer[:n])
-		if s.handlePacket(conn, remote, packet) {
-			s.access.Lock()
-			if session := s.byRemote[remote]; session != nil {
-				session.lastRecv = time.Now()
+		_ = s.handlePacket(conn, remote, buffer[:n])
+	}
+}
+
+func (s *Server) readUDPConnLoop(conn *net.UDPConn) {
+	buffer := make([]byte, fragmentOutputSize)
+	for {
+		n, remote, err := conn.ReadFromUDPAddrPort(buffer)
+		if err != nil {
+			select {
+			case <-s.ctx.Done():
+				return
+			default:
 			}
-			s.access.Unlock()
+			s.options.Logger.Error(E.Cause(err, "read iWAN server packet"))
+			return
 		}
+		_ = s.handlePacket(conn, remote, buffer[:n])
 	}
 }
 
 func (s *Server) deviceLoop() {
 	buffer := make([]byte, fragmentOutputSize)
+	packetBuffer := make([]byte, headerSize+fragmentOutputSize)
 	for {
 		n, err := s.device.Read(buffer)
 		if err != nil {
@@ -290,13 +301,17 @@ func (s *Server) deviceLoop() {
 			continue
 		}
 		remote := session.remote
-		packet := wrapDataPacket(session, buffer[:n])
+		token := session.token
+		sessionID := session.sessionID
+		xorKey := session.xorKey
+		encrypt := session.encrypt
 		conn := s.conn
 		s.access.Unlock()
 		if conn == nil {
 			continue
 		}
-		if err = s.writePacketTo(conn, remote, packet); err != nil {
+		packetBuffer, err = s.writeDataPacketTo(conn, remote, token, sessionID, xorKey, encrypt, buffer[:n], packetBuffer)
+		if err != nil {
 			s.options.Logger.Error(E.Cause(err, "write iWAN server data packet"))
 		}
 	}
@@ -310,6 +325,7 @@ func (s *Server) timerLoop() {
 		case <-s.ctx.Done():
 			return
 		case now := <-ticker.C:
+			s.nowElapsed.Store(now.Sub(s.startTime).Nanoseconds())
 			s.expireSessions(now)
 		}
 	}
@@ -318,8 +334,10 @@ func (s *Server) timerLoop() {
 func (s *Server) expireSessions(now time.Time) {
 	s.access.Lock()
 	defer s.access.Unlock()
+	nowElapsed := now.Sub(s.startTime).Nanoseconds()
 	for remote, session := range s.byRemote {
-		if now.Sub(session.lastRecv) <= s.options.SessionTimeout {
+		lastRecv := session.lastRecv.Load()
+		if nowElapsed-lastRecv <= s.options.SessionTimeout.Nanoseconds() {
 			continue
 		}
 		s.deleteSessionLocked(session)
@@ -385,7 +403,7 @@ func (s *Server) handleOpen(conn net.PacketConn, remote netip.AddrPort, packet [
 			_ = s.writePacketTo(conn, remote, buildOpenRejectPacket())
 			return false
 		}
-		existing.lastRecv = time.Now()
+		existing.markRecv(s.recvElapsedNano())
 		packet = buildOpenAckPacket(existing.token, existing.sessionID, min(s.options.MTU, uint32(info.mtu)), existing.address, existing.encrypt, s.options.DNS)
 		s.access.Unlock()
 		return s.writePacketTo(conn, remote, packet) == nil
@@ -402,8 +420,8 @@ func (s *Server) handleOpen(conn net.PacketConn, remote netip.AddrPort, packet [
 		address:  address,
 		xorKey:   user.xorKey,
 		encrypt:  s.options.Encrypt,
-		lastRecv: time.Now(),
 	}
+	session.markRecv(s.recvElapsedNano())
 	if _, err = rand.Read(session.token[:]); err != nil {
 		s.access.Unlock()
 		_ = s.writePacketTo(conn, remote, buildOpenRejectPacket())
@@ -432,8 +450,7 @@ func (s *Server) handleData(remote netip.AddrPort, packet []byte) bool {
 		s.access.Unlock()
 		return false
 	}
-	payload := make([]byte, len(packet)-headerSize)
-	copy(payload, packet[headerSize:])
+	payload := packet[headerSize:]
 	if session.encrypt {
 		xorData(session.xorKey, payload)
 	}
@@ -441,6 +458,7 @@ func (s *Server) handleData(remote netip.AddrPort, packet []byte) bool {
 		s.access.Unlock()
 		return false
 	}
+	session.markRecv(s.recvElapsedNano())
 	s.access.Unlock()
 	if err := s.device.Write(payload); err != nil {
 		s.options.Logger.Error(E.Cause(err, "write iWAN server data to stack"))
@@ -462,6 +480,7 @@ func (s *Server) handleIPFrag(remote netip.AddrPort, packet []byte) bool {
 		return false
 	}
 	if payload == nil {
+		session.markRecv(s.recvElapsedNano())
 		s.access.Unlock()
 		return true
 	}
@@ -472,6 +491,7 @@ func (s *Server) handleIPFrag(remote netip.AddrPort, packet []byte) bool {
 		s.access.Unlock()
 		return false
 	}
+	session.markRecv(s.recvElapsedNano())
 	s.access.Unlock()
 	if err := s.device.Write(payload); err != nil {
 		s.options.Logger.Error(E.Cause(err, "write iWAN server fragment to stack"))
@@ -490,6 +510,7 @@ func (s *Server) handleEcho(conn net.PacketConn, remote netip.AddrPort, packet [
 		s.access.Unlock()
 		return false
 	}
+	session.markRecv(s.recvElapsedNano())
 	response := buildEchoResponsePacket(packet)
 	s.access.Unlock()
 	return s.writePacketTo(conn, remote, response) == nil
@@ -539,8 +560,30 @@ func (s *Server) deleteSessionLocked(session *serverSession) {
 func (s *Server) writePacketTo(conn net.PacketConn, remote netip.AddrPort, packet []byte) error {
 	s.writeAccess.Lock()
 	defer s.writeAccess.Unlock()
+	if udpConn, ok := conn.(*net.UDPConn); ok {
+		_, err := udpConn.WriteToUDPAddrPort(packet, remote)
+		return err
+	}
 	_, err := conn.WriteTo(packet, M.SocksaddrFromNetIP(remote).UDPAddr())
 	return err
+}
+
+func (s *Server) writeDataPacketTo(conn net.PacketConn, remote netip.AddrPort, token [2]byte, sessionID [4]byte, xorKey [8]byte, encrypt bool, payload []byte, packet []byte) ([]byte, error) {
+	if !encrypt {
+		err := s.writeDataPacketVectorTo(conn, remote, token, sessionID, payload)
+		if err == nil {
+			return packet, nil
+		}
+		if !errors.Is(err, errUnsupportedVectorWrite) {
+			return packet, err
+		}
+	}
+	packet = buildDataPacket(token, sessionID, xorKey, encrypt, payload, packet)
+	return packet, s.writePacketTo(conn, remote, packet)
+}
+
+func (s *Server) recvElapsedNano() int64 {
+	return s.nowElapsed.Load()
 }
 
 func (s *serverSession) matchHeader(packet []byte) bool {
@@ -550,20 +593,14 @@ func (s *serverSession) matchHeader(packet []byte) bool {
 		packet[6] == s.sessionID[2] && packet[7] == s.sessionID[3]
 }
 
-func wrapDataPacket(session *serverSession, payload []byte) []byte {
-	packet := make([]byte, headerSize+len(payload))
-	if session.encrypt {
-		packet[0] = packetDataEnc
-		packet[1] = 1
-		copy(packet[headerSize:], payload)
-		xorData(session.xorKey, packet[headerSize:])
-	} else {
-		packet[0] = packetData
-		copy(packet[headerSize:], payload)
+func (s *serverSession) markRecv(now int64) {
+	if s.lastRecv.Load() != now {
+		s.lastRecv.Store(now)
 	}
-	copy(packet[2:4], session.token[:])
-	copy(packet[4:8], session.sessionID[:])
-	return packet
+}
+
+func wrapDataPacket(session *serverSession, payload []byte) []byte {
+	return buildDataPacket(session.token, session.sessionID, session.xorKey, session.encrypt, payload, nil)
 }
 
 func validSessionSource(packet []byte, expected netip.Addr) bool {

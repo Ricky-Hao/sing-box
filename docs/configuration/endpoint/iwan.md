@@ -6,7 +6,7 @@
 
 !!! warning ""
 
-    iWAN support is userspace stack only in this version. `system` TUN mode and segment routing are not supported yet.
+    iWAN support uses the userspace stack in this version. Segment routing is not supported yet.
 
 ### Version scope
 
@@ -20,7 +20,6 @@ This endpoint implements the single-hop iWAN tunnel data path used by iwand:
 
 This is not a 1:1 replacement for the iwand daemon. The following iwand features are intentionally not included in this version:
 
-- system TUN interface creation and OS route management
 - segment routing (`SEGRT`) and segment-routing IP fragments (`IPFRAG_SR`)
 - `up_script` and `down_script` hooks
 - applying DNS servers from OPENACK to the system resolver
@@ -106,10 +105,6 @@ Optional iWAN pipe index. Valid values are `0` and `1`.
 #### udp_timeout
 
 UDP timeout for the userspace stack.
-
-#### system
-
-Not supported yet. If set to `true`, sing-box returns an error. Leave it unset or set it to `false`.
 
 ### Dial Fields
 

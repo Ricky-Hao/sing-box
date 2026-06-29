@@ -54,9 +54,6 @@ type Endpoint struct {
 }
 
 func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.IWANEndpointOptions) (adapter.Endpoint, error) {
-	if options.System {
-		return nil, E.New("iWAN system mode is not supported yet")
-	}
 	if options.Server == "" {
 		return nil, E.New("missing server")
 	}
