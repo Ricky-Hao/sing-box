@@ -212,17 +212,52 @@ func (d *stackDevice) Read(packet []byte) (int, error) {
 			return 0, os.ErrClosed
 		}
 		defer packetBuffer.DecRef()
-		var n int
-		for _, view := range packetBuffer.AsSlices() {
-			n += copy(packet[n:], view)
-		}
-		return n, nil
+		return copyPacketBuffer(packet, packetBuffer), nil
 	case packetBuffer := <-d.packetOutbound:
 		defer packetBuffer.Release()
 		return copy(packet, packetBuffer.Bytes()), nil
 	case <-d.done:
 		return 0, os.ErrClosed
 	}
+}
+
+func (d *stackDevice) ReadBatch(packets [][]byte, packetSizes []int) (int, error) {
+	if len(packets) == 0 {
+		return 0, nil
+	}
+	n, err := d.Read(packets[0])
+	if err != nil {
+		return 0, err
+	}
+	packetSizes[0] = n
+	packetCount := 1
+	for packetCount < len(packets) {
+		select {
+		case packetBuffer, ok := <-d.outbound:
+			if !ok {
+				return packetCount, nil
+			}
+			packetSizes[packetCount] = copyPacketBuffer(packets[packetCount], packetBuffer)
+			packetBuffer.DecRef()
+		case packetBuffer := <-d.packetOutbound:
+			packetSizes[packetCount] = copy(packets[packetCount], packetBuffer.Bytes())
+			packetBuffer.Release()
+		case <-d.done:
+			return packetCount, nil
+		default:
+			return packetCount, nil
+		}
+		packetCount++
+	}
+	return packetCount, nil
+}
+
+func copyPacketBuffer(packet []byte, packetBuffer *stack.PacketBuffer) int {
+	var n int
+	for _, view := range packetBuffer.AsSlices() {
+		n += copy(packet[n:], view)
+	}
+	return n
 }
 
 func (d *stackDevice) Write(packet []byte) error {
