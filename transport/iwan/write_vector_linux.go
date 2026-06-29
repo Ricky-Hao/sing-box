@@ -174,12 +174,12 @@ func (s *Server) writeDataPacketVectorBatchTo(conn net.PacketConn, packets []ser
 		iovecs[index][0].SetLen(len(headers[index]))
 		iovecCount := 1
 		if len(packets[index].views) > 0 {
-			if len(packets[index].views) > maxPayloadIovec {
-				return 0, errUnsupportedVectorWrite
-			}
 			for _, payload := range packets[index].views {
 				if len(payload) == 0 {
 					continue
+				}
+				if iovecCount > maxPayloadIovec {
+					return 0, errUnsupportedVectorWrite
 				}
 				iovecs[index][iovecCount].Base = &payload[0]
 				iovecs[index][iovecCount].SetLen(len(payload))

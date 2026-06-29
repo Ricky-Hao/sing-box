@@ -50,8 +50,8 @@ func (f *iwanTCPForwarder) forward(request *tcp.ForwarderRequest) {
 	conn := &iwanLazyTCPConn{
 		parentCtx:  f.ctx,
 		request:    request,
-		localAddr:  source.TCPAddr(),
-		remoteAddr: destination.TCPAddr(),
+		localAddr:  destination.TCPAddr(),
+		remoteAddr: source.TCPAddr(),
 	}
 	go f.handler.NewConnectionEx(f.ctx, conn, source, destination, nil)
 }
