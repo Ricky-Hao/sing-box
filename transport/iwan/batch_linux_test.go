@@ -10,6 +10,7 @@ import (
 	"time"
 
 	M "github.com/sagernet/sing/common/metadata"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -52,6 +53,7 @@ func TestWriteDataPacketVectorBatchTo(t *testing.T) {
 	packets := []serverOutboundPacket{
 		{remote: remote, token: token, sessionID: sessionID, payload: []byte("first")},
 		{remote: remote, token: token, sessionID: sessionID, payload: []byte("second")},
+		{remote: remote, token: token, sessionID: sessionID},
 	}
 	sent, err := server.writeDataPacketVectorBatchTo(sender, packets)
 	if err != nil {

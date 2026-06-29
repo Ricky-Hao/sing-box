@@ -366,7 +366,7 @@ func (s *Server) deviceBatchLoop(device serverBatchDevice) {
 		}
 		packets = packets[:0]
 		var conn net.PacketConn
-		for index := 0; index < packetCount; index++ {
+		for index := range packetCount {
 			payload := buffers[index][:packetSizes[index]]
 			destination, ok := ipv4Destination(payload)
 			if !ok {

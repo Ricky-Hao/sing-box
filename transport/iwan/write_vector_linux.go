@@ -11,6 +11,7 @@ import (
 	"unsafe"
 
 	E "github.com/sagernet/sing/common/exceptions"
+
 	"golang.org/x/sys/unix"
 )
 
@@ -128,12 +129,16 @@ func (s *Server) readUDPConnBatchLoop(conn *net.UDPConn) bool {
 			s.options.Logger.Error(E.Cause(err, "read iWAN server packet"))
 			return true
 		}
-		for index := 0; index < packetCount; index++ {
+		for index := range packetCount {
 			remote, ok := rawSockaddrAddrPort(&batch.names[index])
 			if !ok {
 				continue
 			}
-			_ = s.handlePacket(conn, remote, batch.buffers[index][:batch.messages[index].length])
+			packetLength := batch.messages[index].length
+			if packetLength > uint32(len(batch.buffers[index])) {
+				continue
+			}
+			_ = s.handlePacket(conn, remote, batch.buffers[index][:int(packetLength)])
 		}
 	}
 }
@@ -157,7 +162,7 @@ func (s *Server) writeDataPacketVectorBatchTo(conn net.PacketConn, packets []ser
 	var iovecs [udpBatchSize][2]unix.Iovec
 	var messages [udpBatchSize]mmsghdr
 	messageCount := min(len(packets), udpBatchSize)
-	for index := 0; index < messageCount; index++ {
+	for index := range messageCount {
 		nameLength, ok := fillRawSockaddrAddrPort(&names[index], packets[index].remote)
 		if !ok {
 			return 0, errUnsupportedVectorWrite
@@ -165,8 +170,11 @@ func (s *Server) writeDataPacketVectorBatchTo(conn net.PacketConn, packets []ser
 		fillDataPacketHeader(headers[index][:], packets[index].token, packets[index].sessionID, false)
 		iovecs[index][0].Base = &headers[index][0]
 		iovecs[index][0].SetLen(len(headers[index]))
-		iovecs[index][1].Base = &packets[index].payload[0]
-		iovecs[index][1].SetLen(len(packets[index].payload))
+		payload := packets[index].payload
+		if len(payload) > 0 {
+			iovecs[index][1].Base = &payload[0]
+			iovecs[index][1].SetLen(len(payload))
+		}
 		messages[index].header.Name = (*byte)(unsafe.Pointer(&names[index]))
 		messages[index].header.Namelen = nameLength
 		messages[index].header.Iov = &iovecs[index][0]
