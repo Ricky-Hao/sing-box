@@ -20,6 +20,8 @@ type mmsghdr struct {
 	length uint32
 }
 
+const maxPayloadIovec = 8
+
 func (s *Server) writeDataPacketVectorTo(conn net.PacketConn, remote netip.AddrPort, token [2]byte, sessionID [4]byte, payload []byte) error {
 	udpConn, ok := conn.(*net.UDPConn)
 	if !ok {
@@ -159,7 +161,7 @@ func (s *Server) writeDataPacketVectorBatchTo(conn net.PacketConn, packets []ser
 	}
 	var headers [udpBatchSize][headerSize]byte
 	var names [udpBatchSize]unix.RawSockaddrAny
-	var iovecs [udpBatchSize][2]unix.Iovec
+	var iovecs [udpBatchSize][1 + maxPayloadIovec]unix.Iovec
 	var messages [udpBatchSize]mmsghdr
 	messageCount := min(len(packets), udpBatchSize)
 	for index := range messageCount {
@@ -170,15 +172,31 @@ func (s *Server) writeDataPacketVectorBatchTo(conn net.PacketConn, packets []ser
 		fillDataPacketHeader(headers[index][:], packets[index].token, packets[index].sessionID, false)
 		iovecs[index][0].Base = &headers[index][0]
 		iovecs[index][0].SetLen(len(headers[index]))
-		payload := packets[index].payload
-		if len(payload) > 0 {
-			iovecs[index][1].Base = &payload[0]
-			iovecs[index][1].SetLen(len(payload))
+		iovecCount := 1
+		if len(packets[index].views) > 0 {
+			for _, payload := range packets[index].views {
+				if len(payload) == 0 {
+					continue
+				}
+				if iovecCount > maxPayloadIovec {
+					return 0, errUnsupportedVectorWrite
+				}
+				iovecs[index][iovecCount].Base = &payload[0]
+				iovecs[index][iovecCount].SetLen(len(payload))
+				iovecCount++
+			}
+		} else {
+			payload := packets[index].payload
+			if len(payload) > 0 {
+				iovecs[index][iovecCount].Base = &payload[0]
+				iovecs[index][iovecCount].SetLen(len(payload))
+				iovecCount++
+			}
 		}
 		messages[index].header.Name = (*byte)(unsafe.Pointer(&names[index]))
 		messages[index].header.Namelen = nameLength
 		messages[index].header.Iov = &iovecs[index][0]
-		messages[index].header.Iovlen = 2
+		messages[index].header.SetIovlen(iovecCount)
 	}
 	var sent int
 	var writeErr error

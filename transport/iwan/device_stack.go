@@ -47,6 +47,11 @@ type stackDevice struct {
 	icmpForwarder  *tun.ICMPForwarder
 }
 
+const (
+	iwanTCPBufferDefault = 8 << 20
+	iwanTCPBufferMax     = 32 << 20
+)
+
 func newStackDevice(options EndpointOptions) (*stackDevice, error) {
 	if options.MTU == 0 {
 		options.MTU = defaultMTU
@@ -64,8 +69,11 @@ func newStackDevice(options EndpointOptions) (*stackDevice, error) {
 		return nil, err
 	}
 	device.stack = ipStack
+	if err = configureStackTCP(ipStack); err != nil {
+		return nil, err
+	}
 	if options.Handler != nil {
-		ipStack.SetTransportProtocolHandler(tcp.ProtocolNumber, tun.NewTCPForwarder(options.Context, ipStack, options.Handler).HandlePacket)
+		ipStack.SetTransportProtocolHandler(tcp.ProtocolNumber, newIwanTCPForwarder(options.Context, ipStack, options.Handler).HandlePacket)
 		ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, tun.NewUDPForwarder(options.Context, ipStack, options.Handler, options.UDPTimeout).HandlePacket)
 		icmpForwarder := tun.NewICMPForwarder(options.Context, ipStack, options.Handler, options.ICMPTimeout)
 		ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber4, icmpForwarder.HandlePacket)
@@ -73,6 +81,30 @@ func newStackDevice(options EndpointOptions) (*stackDevice, error) {
 		device.icmpForwarder = icmpForwarder
 	}
 	return device, nil
+}
+
+func configureStackTCP(ipStack *stack.Stack) error {
+	sendBuffer := tcpip.TCPSendBufferSizeRangeOption{
+		Min:     tcp.MinBufferSize,
+		Default: iwanTCPBufferDefault,
+		Max:     iwanTCPBufferMax,
+	}
+	if err := ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &sendBuffer); err != nil {
+		return E.New("set iWAN TCP send buffer size: ", err.String())
+	}
+	receiveBuffer := tcpip.TCPReceiveBufferSizeRangeOption{
+		Min:     tcp.MinBufferSize,
+		Default: iwanTCPBufferDefault,
+		Max:     iwanTCPBufferMax,
+	}
+	if err := ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &receiveBuffer); err != nil {
+		return E.New("set iWAN TCP receive buffer size: ", err.String())
+	}
+	congestionControl := tcpip.CongestionControlOption("cubic")
+	if err := ipStack.SetTransportProtocolOption(tcp.ProtocolNumber, &congestionControl); err != nil {
+		return E.New("set iWAN TCP congestion control: ", err.String())
+	}
+	return nil
 }
 
 func (d *stackDevice) Start() error {
@@ -250,6 +282,109 @@ func (d *stackDevice) ReadBatch(packets [][]byte, packetSizes []int) (int, error
 		packetCount++
 	}
 	return packetCount, nil
+}
+
+func (d *stackDevice) ReadPayloadBatch(payloads []serverOutboundPayload) (int, error) {
+	if len(payloads) == 0 {
+		return 0, nil
+	}
+	if err := d.readPayload(&payloads[0]); err != nil {
+		return 0, err
+	}
+	payloadCount := 1
+	for payloadCount < len(payloads) {
+		select {
+		case packetBuffer, ok := <-d.outbound:
+			if !ok {
+				return payloadCount, nil
+			}
+			payloads[payloadCount].setPacketBuffer(packetBuffer)
+		case packetBuffer := <-d.packetOutbound:
+			payloads[payloadCount].setBuffer(packetBuffer)
+		case <-d.done:
+			return payloadCount, nil
+		default:
+			return payloadCount, nil
+		}
+		payloadCount++
+	}
+	return payloadCount, nil
+}
+
+func (d *stackDevice) readPayload(payload *serverOutboundPayload) error {
+	select {
+	case packetBuffer, ok := <-d.outbound:
+		if !ok {
+			return os.ErrClosed
+		}
+		payload.setPacketBuffer(packetBuffer)
+		return nil
+	case packetBuffer := <-d.packetOutbound:
+		payload.setBuffer(packetBuffer)
+		return nil
+	case <-d.done:
+		return os.ErrClosed
+	}
+}
+
+type serverOutboundPayload struct {
+	views        [][]byte
+	size         int
+	packetBuffer *stack.PacketBuffer
+	buffer       *buf.Buffer
+}
+
+func (p *serverOutboundPayload) setPacketBuffer(packetBuffer *stack.PacketBuffer) {
+	p.release()
+	p.views = packetBuffer.AsSlices()
+	p.size = packetBuffer.Size()
+	p.packetBuffer = packetBuffer
+}
+
+func (p *serverOutboundPayload) setBuffer(packetBuffer *buf.Buffer) {
+	p.release()
+	payload := packetBuffer.Bytes()
+	p.views = [][]byte{payload}
+	p.size = len(payload)
+	p.buffer = packetBuffer
+}
+
+func (p *serverOutboundPayload) release() {
+	if p.packetBuffer != nil {
+		p.packetBuffer.DecRef()
+	}
+	if p.buffer != nil {
+		p.buffer.Release()
+	}
+	p.views = nil
+	p.size = 0
+	p.packetBuffer = nil
+	p.buffer = nil
+}
+
+func (p *serverOutboundPayload) destination() (netip.Addr, bool) {
+	if len(p.views) == 0 {
+		return netip.Addr{}, false
+	}
+	if len(p.views) == 1 {
+		return ipv4Destination(p.views[0])
+	}
+	var headerBuffer [20]byte
+	var headerSize int
+	for _, view := range p.views {
+		headerSize += copy(headerBuffer[headerSize:], view)
+		if headerSize == len(headerBuffer) {
+			break
+		}
+	}
+	if headerSize < len(headerBuffer) || headerBuffer[0]>>4 != 4 {
+		return netip.Addr{}, false
+	}
+	ipHeaderLength := int(headerBuffer[0]&0x0f) * 4
+	if ipHeaderLength < 20 || p.size < ipHeaderLength {
+		return netip.Addr{}, false
+	}
+	return netip.AddrFrom4([4]byte(headerBuffer[16:20])), true
 }
 
 func copyPacketBuffer(packet []byte, packetBuffer *stack.PacketBuffer) int {

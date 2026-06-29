@@ -53,6 +53,12 @@ func TestWriteDataPacketVectorBatchTo(t *testing.T) {
 	packets := []serverOutboundPacket{
 		{remote: remote, token: token, sessionID: sessionID, payload: []byte("first")},
 		{remote: remote, token: token, sessionID: sessionID, payload: []byte("second")},
+		{remote: remote, token: token, sessionID: sessionID, views: [][]byte{[]byte("third-"), []byte("views")}, size: len("third-views")},
+		{
+			remote: remote, token: token, sessionID: sessionID,
+			views: [][]byte{nil, []byte("fourth"), {}, []byte("-views")},
+			size:  len("fourth-views"),
+		},
 		{remote: remote, token: token, sessionID: sessionID},
 	}
 	sent, err := server.writeDataPacketVectorBatchTo(sender, packets)
@@ -63,8 +69,15 @@ func TestWriteDataPacketVectorBatchTo(t *testing.T) {
 		t.Fatalf("unexpected sent count: %d", sent)
 	}
 	for index, expected := range packets {
+		expectedPayload := expected.payload
+		if len(expected.views) > 0 {
+			expectedPayload = nil
+			for _, view := range expected.views {
+				expectedPayload = append(expectedPayload, view...)
+			}
+		}
 		_ = receiver.SetReadDeadline(time.Now().Add(time.Second))
-		buffer := make([]byte, headerSize+len(expected.payload))
+		buffer := make([]byte, headerSize+len(expectedPayload))
 		n, _, err := receiver.ReadFromUDPAddrPort(buffer)
 		if err != nil {
 			t.Fatal(err)
@@ -73,8 +86,8 @@ func TestWriteDataPacketVectorBatchTo(t *testing.T) {
 		if packet[0] != packetData || packet[1] != 0 || string(packet[2:4]) != string(token[:]) || string(packet[4:8]) != string(sessionID[:]) {
 			t.Fatalf("packet %d has invalid header: %x", index, packet[:headerSize])
 		}
-		if string(packet[headerSize:]) != string(expected.payload) {
-			t.Fatalf("packet %d payload = %q, want %q", index, packet[headerSize:], expected.payload)
+		if string(packet[headerSize:]) != string(expectedPayload) {
+			t.Fatalf("packet %d payload = %q, want %q", index, packet[headerSize:], expectedPayload)
 		}
 	}
 }
