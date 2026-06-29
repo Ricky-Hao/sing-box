@@ -54,7 +54,11 @@ func TestWriteDataPacketVectorBatchTo(t *testing.T) {
 		{remote: remote, token: token, sessionID: sessionID, payload: []byte("first")},
 		{remote: remote, token: token, sessionID: sessionID, payload: []byte("second")},
 		{remote: remote, token: token, sessionID: sessionID, views: [][]byte{[]byte("third-"), []byte("views")}, size: len("third-views")},
-		{remote: remote, token: token, sessionID: sessionID, views: [][]byte{nil, []byte("fourth"), []byte{}, []byte("-views")}, size: len("fourth-views")},
+		{
+			remote: remote, token: token, sessionID: sessionID,
+			views: [][]byte{nil, []byte("fourth"), {}, []byte("-views")},
+			size:  len("fourth-views"),
+		},
 		{remote: remote, token: token, sessionID: sessionID},
 	}
 	sent, err := server.writeDataPacketVectorBatchTo(sender, packets)
