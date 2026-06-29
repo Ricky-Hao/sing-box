@@ -7,7 +7,6 @@ import (
 )
 
 type IWANEndpointOptions struct {
-	System     bool                             `json:"system,omitempty"`
 	Address    badoption.Listable[netip.Prefix] `json:"address,omitempty"`
 	AllowedIPs badoption.Listable[netip.Prefix] `json:"allowed_ips,omitempty"`
 	MTU        uint32                           `json:"mtu,omitempty"`
@@ -23,8 +22,6 @@ type IWANEndpointOptions struct {
 
 type IWANInboundOptions struct {
 	ListenOptions
-	System         bool                           `json:"system,omitempty"`
-	InterfaceName  string                         `json:"interface_name,omitempty"`
 	AddressPool    netip.Prefix                   `json:"address_pool"`
 	Username       string                         `json:"username,omitempty"`
 	Password       string                         `json:"password,omitempty"`

@@ -238,8 +238,10 @@ func (d *stackDevice) Write(packet []byte) error {
 	default:
 		return nil
 	}
+	view := buffer.NewViewSize(len(packet))
+	copy(view.AsSlice(), packet)
 	packetBuffer := stack.NewPacketBuffer(stack.PacketBufferOptions{
-		Payload: buffer.MakeWithData(packet),
+		Payload: buffer.MakeWithView(view),
 	})
 	d.dispatcher.DeliverNetworkPacket(networkProtocol, packetBuffer)
 	packetBuffer.DecRef()

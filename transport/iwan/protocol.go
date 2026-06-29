@@ -245,6 +245,35 @@ func buildOpenRejectPacket() []byte {
 	return packet
 }
 
+func fillDataPacketHeader(packet []byte, token [2]byte, sessionID [4]byte, encrypt bool) {
+	if encrypt {
+		packet[0] = packetDataEnc
+		packet[1] = 1
+	} else {
+		packet[0] = packetData
+		packet[1] = 0
+	}
+	copy(packet[2:4], token[:])
+	copy(packet[4:8], sessionID[:])
+}
+
+func buildDataPacket(token [2]byte, sessionID [4]byte, xorKey [8]byte, encrypt bool, payload []byte, packet []byte) []byte {
+	packetSize := headerSize + len(payload)
+	if cap(packet) < packetSize {
+		packet = make([]byte, packetSize)
+	} else {
+		packet = packet[:packetSize]
+	}
+	fillDataPacketHeader(packet, token, sessionID, encrypt)
+	if encrypt {
+		copy(packet[headerSize:], payload)
+		xorData(xorKey, packet[headerSize:])
+	} else {
+		copy(packet[headerSize:], payload)
+	}
+	return packet
+}
+
 func buildEchoResponsePacket(request []byte) []byte {
 	packet := make([]byte, max(signedHeader, len(request)))
 	packet[0] = packetEchoResp
