@@ -46,11 +46,11 @@ func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn 
 			conn.Close()
 			return err
 		}
-		responseLength := response.Len()
+		responseLength := dns.UncompressedMessageLen(response)
 		responseBuffer := buf.NewSize(3 + responseLength)
 		defer responseBuffer.Release()
 		responseBuffer.Resize(2, 0)
-		n, err := response.PackBuffer(responseBuffer.FreeBytes())
+		n, err := dns.PackCompressedMessage(response, responseBuffer.FreeBytes())
 		if err != nil {
 			return err
 		}
