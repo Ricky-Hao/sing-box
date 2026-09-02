@@ -24,6 +24,10 @@ The iWAN inbound accepts iWAN endpoint clients and routes packets through sing-b
 
 The client side should use the iWAN endpoint in `endpoints`.
 
+!!! warning "Security"
+
+    Compatibility with legacy iwand uses MD5-signed control packets, a reversible AES password block derived from the username, and XOR data obfuscation. It does not provide modern confidentiality, peer authentication, or replay resistance against an on-path or passive observer. Deploy it only inside a trusted network or authenticated encrypted tunnel.
+
 ### Fields
 
 #### listen
