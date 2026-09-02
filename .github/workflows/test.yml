@@ -3,20 +3,14 @@ name: Test
 on:
   push:
     branches:
-      - oldstable
-      - stable
-      - testing
-      - unstable
+      - rickyhao/stable
     paths-ignore:
       - '**.md'
       - '.github/**'
       - '!.github/workflows/test.yml'
   pull_request:
     branches:
-      - oldstable
-      - stable
-      - testing
-      - unstable
+      - rickyhao/stable
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}-${{ inputs.build }}
