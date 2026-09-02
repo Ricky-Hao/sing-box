@@ -46,18 +46,18 @@ jobs:
         with:
           fetch-depth: 0
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-linux-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-linux-
       - name: Cache Go tool builds
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/go-build
           key: go-build-tools-linux-${{ hashFiles('go.sum') }}
@@ -99,12 +99,12 @@ jobs:
         with:
           fetch-depth: 1
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-linux-${{ hashFiles('go.sum') }}
@@ -112,7 +112,7 @@ jobs:
       - name: Cache Go for Windows 7
         if: matrix.legacy_win7
         id: cache-go-for-windows7
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/go/go_win7
@@ -130,7 +130,7 @@ jobs:
           echo "GOROOT=$HOME/go/go_win7" >> $GITHUB_ENV
       - name: Setup Android NDK
         if: matrix.os == 'android'
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         with:
           ndk-version: r28
       - name: Clone cronet-go
@@ -273,7 +273,7 @@ jobs:
       - name: Cleanup
         run: rm -f dist/sing-box dist/libcronet.so
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binary-${{ matrix.os }}_${{ matrix.arch }}${{ matrix.variant && format('-{0}', matrix.variant) }}
           path: "dist"
@@ -294,12 +294,12 @@ jobs:
         with:
           fetch-depth: 1
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-macos-${{ hashFiles('go.sum') }}
@@ -307,7 +307,7 @@ jobs:
       - name: Cache Go for macOS 10.13
         if: matrix.legacy_osx
         id: cache-go-for-macos1013
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/go/go_osx
@@ -363,7 +363,7 @@ jobs:
       - name: Cleanup
         run: rm dist/sing-box
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binary-darwin_${{ matrix.arch }}
           path: "dist"
@@ -384,12 +384,12 @@ jobs:
         with:
           fetch-depth: 1
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-windows-${{ hashFiles('go.sum') }}
@@ -463,7 +463,7 @@ jobs:
         if: ${{ !matrix.naive }}
         run: Remove-Item dist/sing-box.exe
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binary-windows_${{ matrix.arch }}
           path: "dist"
@@ -487,19 +487,19 @@ jobs:
         with:
           fetch-depth: 1
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-linux-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-linux-
       - name: Setup Android NDK
         id: setup-ndk
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         with:
           ndk-version: r28
       - name: Setup OpenJDK
@@ -521,7 +521,7 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
       - name: Upload library
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: libbox-android-${{ matrix.go_arch }}
           path: dist
@@ -548,25 +548,25 @@ jobs:
       - name: Checkout Android client
         run: git submodule update --init clients/android
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-linux-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-linux-
       - name: Cache Go tool builds
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/go-build
           key: go-build-tools-linux-${{ hashFiles('go.sum') }}
           restore-keys: go-build-tools-linux-
       - name: Setup Android NDK
         id: setup-ndk
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         with:
           ndk-version: r28
       - name: Setup OpenJDK
@@ -579,7 +579,7 @@ jobs:
           git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }} || echo "PUBLISHED=false" >> "$GITHUB_ENV"
           git tag v${{ needs.calculate_version.outputs.version }} -f
       - name: Download libraries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: libbox-android-*
           path: libbox-inputs
@@ -654,7 +654,7 @@ jobs:
           EOF
           cat dist/SFA-version-metadata.json
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binary-android-apks-${{ matrix.variant }}
           path: 'dist'
@@ -673,25 +673,25 @@ jobs:
       - name: Checkout Android client
         run: git submodule update --init clients/android
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-linux-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-linux-
       - name: Cache Go tool builds
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/go-build
           key: go-build-tools-linux-${{ hashFiles('go.sum') }}
           restore-keys: go-build-tools-linux-
       - name: Setup Android NDK
         id: setup-ndk
-        uses: nttld/setup-ndk@v1
+        uses: nttld/setup-ndk@ed92fe6cadad69be94a966a7ee3271275e62f779 # v1
         with:
           ndk-version: r28
       - name: Setup OpenJDK
@@ -704,7 +704,7 @@ jobs:
           git ls-remote --exit-code --tags origin v${{ needs.calculate_version.outputs.version }} || echo "PUBLISHED=false" >> "$GITHUB_ENV"
           git tag v${{ needs.calculate_version.outputs.version }} -f
       - name: Download libraries
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: libbox-android-*
           path: libbox-inputs
@@ -786,22 +786,22 @@ jobs:
       - name: Checkout desktop submodules
         run: git -C clients/desktop submodule update --init --recursive
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-desktop-windows-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-desktop-windows-
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@1.88.0
+        uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           targets: ${{ matrix.rust_target }}
       - name: Cache Windows sharing module
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/git
@@ -810,11 +810,11 @@ jobs:
           key: windows-share-${{ matrix.rust_target }}-${{ hashFiles('clients/desktop/native/windows-share/Cargo.lock') }}
           restore-keys: windows-share-${{ matrix.rust_target }}-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: clients/desktop/package.json
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: clients/desktop/package.json
           cache: pnpm
@@ -866,7 +866,7 @@ jobs:
           New-Item -ItemType Directory -Force dist | Out-Null
           Copy-Item $artifacts.FullName dist
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binary-windows-client-${{ matrix.desktop_arch }}
           path: 'dist'
@@ -898,22 +898,22 @@ jobs:
       - name: Checkout desktop submodules
         run: git -C clients/desktop submodule update --init --recursive
       - name: Setup Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-desktop-linux-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-desktop-linux-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           package_json_file: clients/desktop/package.json
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: clients/desktop/package.json
           cache: pnpm
@@ -1021,7 +1021,7 @@ jobs:
           mkdir -p dist
           cp "${artifacts[@]}" dist
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binary-linux-client-${{ matrix.desktop_arch }}
           path: 'dist'
@@ -1055,20 +1055,20 @@ jobs:
           fetch-depth: 1
       - name: Setup Go
         if: matrix.build
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
         if: matrix.build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-macos-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-macos-
       - name: Cache Go build
         if: matrix.build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/Library/Caches/go-build
           key: libbox-go-build-${{ matrix.artifact }}-1.26.7-${{ hashFiles('go.sum') }}
@@ -1086,7 +1086,7 @@ jobs:
           tar -cf dist/Libbox-${{ matrix.artifact }}.tar Libbox.xcframework
       - name: Upload library
         if: matrix.build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: libbox-apple-${{ matrix.artifact }}
           path: dist
@@ -1137,20 +1137,20 @@ jobs:
         run: git submodule update --init --recursive clients/apple
       - name: Setup Go
         if: matrix.if
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version: 1.26.7
           cache: false
       - name: Cache Go modules
         if: matrix.if
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/go/pkg/mod
           key: go-mod-macos-${{ hashFiles('go.sum') }}
           restore-keys: go-mod-macos-
       - name: Cache Go tool builds
         if: matrix.if
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/Library/Caches/go-build
           key: go-build-tools-macos-${{ hashFiles('go.sum') }}
@@ -1173,14 +1173,14 @@ jobs:
           git checkout dev
       - name: Cache Swift packages
         if: matrix.if
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/SourcePackages
           key: apple-spm-${{ hashFiles('clients/apple/sing-box.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
           restore-keys: apple-spm-
       - name: Cache Xcode build data
         if: matrix.if
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ matrix.type == 'standalone' && 'clients/apple/build/SFM.System-*.dd' || matrix.type == 'jailbreak' && 'clients/apple/build/jailbreak/DerivedData' || format('{0}/DerivedData', runner.temp) }}
           key: apple-derived-data-${{ matrix.type }}-${{ matrix.platform }}-${{ matrix.variant || 'default' }}-${{ hashFiles('clients/apple/sing-box.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}-${{ github.sha }}
@@ -1307,7 +1307,7 @@ jobs:
           defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidatation -bool YES
       - name: Download library
         if: matrix.if
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: ${{ matrix.type == 'standalone' && format('libbox-apple-macos-{0}', matrix.library_arch) || format('libbox-apple-{0}-*', matrix.platform) }}
           path: libbox-inputs
@@ -1412,7 +1412,7 @@ jobs:
         run: rm -rf "$RUNNER_TEMP/SourcePackages/repositories"
       - name: Upload release artifact
         if: matrix.if && (matrix.type == 'standalone' || matrix.type == 'jailbreak')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: binary-apple-${{ matrix.type }}${{ matrix.variant && format('-{0}', matrix.variant) || '' }}
           path: 'dist'
@@ -1473,6 +1473,8 @@ jobs:
       id-token: write
       attestations: write
       artifact-metadata: write
+    env:
+      GHR_COMMIT: 610bfc9f5712eac7fe65a31fb1a214b64fb2b86c
     needs:
       - calculate_version
       - build
@@ -1486,17 +1488,20 @@ jobs:
         with:
           fetch-depth: 1
       - name: Cache ghr
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: cache-ghr
         with:
           path: |
             ~/go/bin/ghr
-          key: ghr
+          key: ghr-${{ env.GHR_COMMIT }}
       - name: Setup ghr
         if: steps.cache-ghr.outputs.cache-hit != 'true'
         run: |-
           cd $HOME
-          git clone https://github.com/nekohasekai/ghr ghr
+          git init ghr
+          git -C ghr remote add origin https://github.com/nekohasekai/ghr.git
+          git -C ghr fetch --depth=1 origin "$GHR_COMMIT"
+          git -C ghr checkout --detach "$GHR_COMMIT"
           cd ghr
           go install -v .
       - name: Set tag
@@ -1505,7 +1510,7 @@ jobs:
           git tag v${{ needs.calculate_version.outputs.version }} -f
           echo "VERSION=${{ needs.calculate_version.outputs.version }}" >> "$GITHUB_ENV"
       - name: Download builds
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           pattern: binary-*
           path: dist
