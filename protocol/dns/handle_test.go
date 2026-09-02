@@ -17,7 +17,7 @@ func TestWriteStreamResponsePacksCompressedParseableMessage(t *testing.T) {
 		MsgHdr:   mDNS.MsgHdr{Id: 1, Response: true},
 		Question: []mDNS.Question{{Name: "repeated-name.example.", Qtype: mDNS.TypeA, Qclass: mDNS.ClassINET}},
 	}
-	for index := 0; index < 8; index++ {
+	for index := range 8 {
 		response.Answer = append(response.Answer, &mDNS.A{
 			Hdr: mDNS.RR_Header{Name: response.Question[0].Name, Rrtype: mDNS.TypeA, Class: mDNS.ClassINET},
 			A:   net.IPv4(192, 0, 2, byte(index+1)),

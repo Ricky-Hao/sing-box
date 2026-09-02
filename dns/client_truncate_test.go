@@ -179,7 +179,7 @@ func responseWithCompressedLength(t *testing.T, target int) (*mDNS.Msg, *mDNS.Ms
 	t.Helper()
 	request := newTestRequest()
 	response := newTestResponse(request.Question[0])
-	for index := 0; index < 8; index++ {
+	for index := range 8 {
 		response.Answer = append(response.Answer, &mDNS.A{
 			Hdr: mDNS.RR_Header{
 				Name:   request.Question[0].Name,
