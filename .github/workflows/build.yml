@@ -16,8 +16,6 @@ on:
           - All
           - Binary
           - Android
-          - Windows
-          - Linux
           - Apple
           - Apple-release
           - iOS
@@ -25,11 +23,6 @@ on:
           - tvOS
           - macOS-standalone
           - iOS-jailbreak
-          - publish-android
-      test_message:
-        description: "TestFlight test message"
-        required: false
-        type: string
   push:
     tags:
       - "v*"
@@ -39,7 +32,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   calculate_version:
@@ -476,7 +469,7 @@ jobs:
           path: "dist"
   build_android_library:
     name: Build Android library (${{ matrix.go_arch }})
-    if: (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Android' || inputs.build == 'publish-android') && github.ref != 'refs/heads/oldstable'
+    if: (github.event_name != 'workflow_dispatch' || inputs.build == 'All' || inputs.build == 'Android') && github.ref != 'refs/heads/oldstable'
     runs-on: ubuntu-latest
     needs:
       - calculate_version
@@ -1376,13 +1369,7 @@ jobs:
       - name: Publish to TestFlight
         if: matrix.if && matrix.type == 'app-store' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/testing'
         run: |-
-          arguments=(publish_testflight "${{ matrix.platform }}")
-          if [[ -n "$TEST_MESSAGE" ]]; then
-            arguments+=("$TEST_MESSAGE")
-          fi
-          go run -v ./cmd/internal/app_store_connect "${arguments[@]}"
-        env:
-          TEST_MESSAGE: ${{ inputs.test_message }}
+          go run -v ./cmd/internal/app_store_connect publish_testflight "${{ matrix.platform }}"
       - name: Build standalone packages
         if: matrix.if && matrix.type == 'standalone'
         run: |-
