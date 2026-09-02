@@ -4,7 +4,6 @@ package iwan
 
 import (
 	"context"
-	"errors"
 	"net"
 	"sync"
 	"time"
@@ -17,7 +16,6 @@ import (
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
 	M "github.com/sagernet/sing/common/metadata"
-	N "github.com/sagernet/sing/common/network"
 )
 
 type iwanTCPForwarder struct {
@@ -42,9 +40,12 @@ func (f *iwanTCPForwarder) HandlePacket(id stack.TransportEndpointID, packetBuff
 func (f *iwanTCPForwarder) forward(request *tcp.ForwarderRequest) {
 	source := M.SocksaddrFrom(tun.AddrFromAddress(request.ID().RemoteAddress), request.ID().RemotePort)
 	destination := M.SocksaddrFrom(tun.AddrFromAddress(request.ID().LocalAddress), request.ID().LocalPort)
-	_, err := f.handler.PrepareConnection(N.NetworkTCP, source, destination, nil, 0)
-	if err != nil {
-		request.Complete(!errors.Is(err, tun.ErrDrop))
+	switch f.handler.JudgeFlow(uint8(tcp.ProtocolNumber), source.AddrPort(), destination.AddrPort(), nil).Action {
+	case tun.ActionReject:
+		request.Complete(true)
+		return
+	case tun.ActionDrop:
+		request.Complete(false)
 		return
 	}
 	conn := &iwanLazyTCPConn{
@@ -108,7 +109,7 @@ func (c *iwanLazyTCPConn) HandshakeFailure(err error) error {
 	if c.handshakeDone {
 		return net.ErrClosed
 	}
-	c.request.Complete(!errors.Is(err, tun.ErrDrop))
+	c.request.Complete(true)
 	c.handshakeErr = err
 	c.handshakeDone = true
 	return nil

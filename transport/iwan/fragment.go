@@ -16,14 +16,13 @@ type fragmentSlot struct {
 	buffer    [fragmentBufferSize]byte
 	timestamp time.Time
 	id        uint32
-	offset    uint16
 	length    uint16
 	inUse     bool
 }
 
 func (e *Endpoint) handleIPFrag(conn net.Conn, packet []byte) bool {
 	e.access.Lock()
-	if e.conn != conn || !e.ready.Load() {
+	if e.conn != conn || !e.ready.Load() || !e.matchesSessionLocked(packet) {
 		e.access.Unlock()
 		return false
 	}
@@ -41,6 +40,9 @@ func (e *Endpoint) handleIPFrag(conn net.Conn, packet []byte) bool {
 	}
 	if encrypt {
 		xorData(xorKey, payload)
+	}
+	if e.returnPacket(payload) {
+		return true
 	}
 	if err := e.device.Write(payload); err != nil {
 		e.options.Logger.Error(err)
@@ -73,32 +75,24 @@ func (r *fragmentReassembler) handle(packet []byte) ([]byte, bool) {
 			slot.inUse = false
 			break
 		}
-		output := make([]byte, fragmentOutputSize)
-		var totalLength int
-		if !endOfPacket {
-			totalLength = int(slot.length) + fragmentLength
+		if fragmentOffset != int(slot.length) {
+			slot.inUse = false
+			return nil, false
+		}
+		totalLength := fragmentOffset + fragmentLength
+		if endOfPacket {
 			if totalLength > fragmentOutputSize {
 				slot.inUse = false
 				return nil, false
 			}
-			copy(output, fragmentData)
-			copy(output[fragmentLength:], slot.buffer[:slot.length])
-		} else {
-			totalLength = fragmentOffset + fragmentLength
-			totalLength = max(totalLength, int(slot.length))
-			if totalLength > fragmentOutputSize {
-				slot.inUse = false
-				return nil, false
-			}
+			output := make([]byte, totalLength)
 			copy(output, slot.buffer[:slot.length])
 			copy(output[fragmentOffset:], fragmentData)
-		}
-		if endOfPacket {
 			slot.inUse = false
-			return output[:totalLength], true
+			return output, true
 		}
 		if totalLength <= fragmentBufferSize {
-			copy(slot.buffer[:], output[:totalLength])
+			copy(slot.buffer[fragmentOffset:], fragmentData)
 			slot.length = uint16(totalLength)
 			slot.timestamp = now
 			return nil, true
@@ -110,17 +104,15 @@ func (r *fragmentReassembler) handle(packet []byte) ([]byte, bool) {
 	if slot == nil {
 		return nil, false
 	}
+	if endOfPacket || fragmentOffset != 0 || fragmentLength > fragmentBufferSize {
+		return nil, false
+	}
 	slot.inUse = true
 	slot.id = fragmentID
 	slot.timestamp = now
-	slot.offset = uint16(fragmentOffset)
 	slot.length = uint16(fragmentLength)
-	if fragmentLength <= fragmentBufferSize {
-		copy(slot.buffer[:], fragmentData)
-		return nil, true
-	}
-	slot.inUse = false
-	return nil, false
+	copy(slot.buffer[:], fragmentData)
+	return nil, true
 }
 
 func (r *fragmentReassembler) emptySlot(now time.Time) *fragmentSlot {

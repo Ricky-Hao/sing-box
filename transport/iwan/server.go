@@ -146,6 +146,10 @@ func NewServer(options ServerOptions) (*Server, error) {
 			cancel()
 			return nil, E.New("missing username")
 		}
+		if err := validateUsername(user.Username); err != nil {
+			cancel()
+			return nil, err
+		}
 		if user.Password == "" {
 			cancel()
 			return nil, E.New("missing password for user ", user.Username)

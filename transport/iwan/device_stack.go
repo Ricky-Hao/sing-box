@@ -9,7 +9,6 @@ import (
 	"os"
 	"sync"
 	"sync/atomic"
-	"time"
 
 	"github.com/sagernet/gvisor/pkg/buffer"
 	"github.com/sagernet/gvisor/pkg/tcpip"
@@ -21,10 +20,8 @@ import (
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/icmp"
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/tcp"
 	"github.com/sagernet/gvisor/pkg/tcpip/transport/udp"
-	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-tun"
-	"github.com/sagernet/sing-tun/ping"
 	"github.com/sagernet/sing/common/buf"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -45,6 +42,7 @@ type stackDevice struct {
 	inet4Address   netip.Addr
 	inet6Address   netip.Addr
 	icmpForwarder  *tun.ICMPForwarder
+	udpForwarder   *tun.UDPForwarder
 }
 
 const (
@@ -74,8 +72,13 @@ func newStackDevice(options EndpointOptions) (*stackDevice, error) {
 	}
 	if options.Handler != nil {
 		ipStack.SetTransportProtocolHandler(tcp.ProtocolNumber, newIwanTCPForwarder(options.Context, ipStack, options.Handler).HandlePacket)
-		ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, tun.NewUDPForwarder(options.Context, ipStack, options.Handler, options.UDPTimeout).HandlePacket)
-		icmpForwarder := tun.NewICMPForwarder(options.Context, ipStack, options.Handler, options.ICMPTimeout)
+		udpForwarder := tun.NewUDPForwarder(options.Context, ipStack, options.Handler, tun.UDPNatOptions{
+			Timeout: options.UDPTimeout,
+			Shared:  true,
+		})
+		ipStack.SetTransportProtocolHandler(udp.ProtocolNumber, udpForwarder.HandlePacket)
+		device.udpForwarder = udpForwarder
+		icmpForwarder := tun.NewICMPForwarder(ipStack, options.Handler, options.Logger)
 		ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber4, icmpForwarder.HandlePacket)
 		ipStack.SetTransportProtocolHandler(icmp.ProtocolNumber6, icmpForwarder.HandlePacket)
 		device.icmpForwarder = icmpForwarder
@@ -108,6 +111,9 @@ func configureStackTCP(ipStack *stack.Stack) error {
 }
 
 func (d *stackDevice) Start() error {
+	if d.udpForwarder != nil {
+		return d.udpForwarder.Start()
+	}
 	return nil
 }
 
@@ -164,9 +170,6 @@ func (d *stackDevice) SetLocalAddress(prefix netip.Prefix) error {
 		d.inet4Address = prefix.Addr()
 	} else {
 		d.inet6Address = prefix.Addr()
-	}
-	if d.icmpForwarder != nil {
-		d.icmpForwarder.SetLocalAddresses(d.inet4Address, d.inet6Address)
 	}
 	return nil
 }
@@ -421,6 +424,12 @@ func (d *stackDevice) Write(packet []byte) error {
 func (d *stackDevice) Close() error {
 	d.closeOnce.Do(func() {
 		close(d.done)
+		if d.udpForwarder != nil {
+			_ = d.udpForwarder.Close()
+		}
+		if d.icmpForwarder != nil {
+			_ = d.icmpForwarder.Close()
+		}
 		if d.stack != nil {
 			d.stack.Close()
 			for _, endpoint := range d.stack.CleanupEndpoints() {
@@ -430,27 +439,6 @@ func (d *stackDevice) Close() error {
 		}
 	})
 	return nil
-}
-
-func (d *stackDevice) CreateDestination(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	ctx := log.ContextWithNewID(d.ctx)
-	d.addressAccess.RLock()
-	inet4Address := d.inet4Address
-	inet6Address := d.inet6Address
-	d.addressAccess.RUnlock()
-	destination, err := ping.ConnectGVisor(
-		ctx, d.logger,
-		metadata.Source.Addr, metadata.Destination.Addr,
-		routeContext,
-		d.stack,
-		inet4Address, inet6Address,
-		timeout,
-	)
-	if err != nil {
-		return nil, err
-	}
-	d.logger.InfoContext(ctx, "linked ", metadata.Network, " connection from ", metadata.Source.AddrString(), " to ", metadata.Destination.AddrString())
-	return destination, nil
 }
 
 var _ stack.LinkEndpoint = (*iwanLinkEndpoint)(nil)

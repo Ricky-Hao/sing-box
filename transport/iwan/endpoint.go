@@ -12,7 +12,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-tun"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -46,6 +45,7 @@ type Endpoint struct {
 	routeMagic   uint32
 	localAddress netip.Prefix
 	fragments    fragmentReassembler
+	returnState  atomic.Pointer[returnPathState]
 }
 
 func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
@@ -57,6 +57,9 @@ func NewEndpoint(options EndpointOptions) (*Endpoint, error) {
 	}
 	if options.Username == "" {
 		return nil, E.New("missing username")
+	}
+	if err := validateUsername(options.Username); err != nil {
+		return nil, err
 	}
 	if options.Password == "" {
 		return nil, E.New("missing password")
@@ -105,6 +108,11 @@ func (e *Endpoint) Start() error {
 		return err
 	}
 	setUDPSocketBuffer(e.options.Logger, conn)
+	if err = e.device.Start(); err != nil {
+		e.started.Store(false)
+		_ = conn.Close()
+		return err
+	}
 	e.access.Lock()
 	e.conn = conn
 	e.state = stateAuthSent
@@ -166,10 +174,6 @@ func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 		return nil, E.Cause(os.ErrInvalid, "invalid non-IP destination")
 	}
 	return e.device.ListenPacket(ctx, destination)
-}
-
-func (e *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	return e.device.CreateDestination(metadata, routeContext, timeout)
 }
 
 func (e *Endpoint) Close() error {
@@ -433,7 +437,7 @@ func (e *Endpoint) handleData(conn net.Conn, packet []byte) bool {
 		return false
 	}
 	e.access.Lock()
-	if e.conn != conn || !e.ready.Load() {
+	if e.conn != conn || !e.ready.Load() || !e.matchesSessionLocked(packet) || e.encrypt != (packet[0] == packetDataEnc) {
 		e.access.Unlock()
 		return false
 	}
@@ -442,6 +446,9 @@ func (e *Endpoint) handleData(conn net.Conn, packet []byte) bool {
 	payload := packet[headerSize:]
 	if packet[0] == packetDataEnc {
 		xorData(xorKey, payload)
+	}
+	if e.returnPacket(payload) {
+		return true
 	}
 	if err := e.device.Write(payload); err != nil {
 		e.options.Logger.Error(E.Cause(err, "write iWAN data to stack"))
@@ -508,6 +515,90 @@ func (e *Endpoint) writePacketTo(conn net.Conn, packet []byte) error {
 	defer e.writeAccess.Unlock()
 	_, err := conn.Write(packet)
 	return err
+}
+
+func (e *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
+	e.access.Lock()
+	defer e.access.Unlock()
+	if e.localAddress.Addr().Is4() {
+		return e.localAddress.Addr(), netip.Addr{}
+	}
+	return netip.Addr{}, e.localAddress.Addr()
+}
+
+func (e *Endpoint) PortMTU() uint32 {
+	return e.device.mtu.Load()
+}
+
+func (e *Endpoint) AttachReturn(returnPath tun.Return) error {
+	newState := &returnPathState{
+		returnPath: returnPath,
+		headroom:   returnPath.ReturnHeadroom(),
+	}
+	for {
+		currentState := e.returnState.Load()
+		if currentState != nil {
+			if currentState.returnPath == returnPath {
+				return nil
+			}
+			return E.New("return path already attached")
+		}
+		if e.returnState.CompareAndSwap(nil, newState) {
+			return nil
+		}
+	}
+}
+
+func (e *Endpoint) DetachReturn(returnPath tun.Return) error {
+	currentState := e.returnState.Load()
+	if currentState != nil && currentState.returnPath == returnPath {
+		e.returnState.CompareAndSwap(currentState, nil)
+	}
+	return nil
+}
+
+func (e *Endpoint) WritePackets(packets [][]byte) error {
+	e.access.Lock()
+	if e.conn == nil || e.state != stateEstablished || !e.ready.Load() {
+		e.access.Unlock()
+		return E.New("iWAN is not ready yet")
+	}
+	conn := e.conn
+	encrypt := e.encrypt
+	token := e.token
+	sessionID := e.sessionID
+	xorKey := e.xorKey
+	e.access.Unlock()
+	var packetBuffer []byte
+	for _, payload := range packets {
+		packetBuffer = buildDataPacket(token, sessionID, xorKey, encrypt, payload, packetBuffer)
+		if err := e.writePacketTo(conn, packetBuffer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *Endpoint) matchesSessionLocked(packet []byte) bool {
+	return len(packet) >= headerSize &&
+		packet[2] == e.token[0] && packet[3] == e.token[1] &&
+		packet[4] == e.sessionID[0] && packet[5] == e.sessionID[1] &&
+		packet[6] == e.sessionID[2] && packet[7] == e.sessionID[3]
+}
+
+func (e *Endpoint) returnPacket(payload []byte) bool {
+	state := e.returnState.Load()
+	if state == nil {
+		return false
+	}
+	packet := make([]byte, state.headroom+len(payload))
+	copy(packet[state.headroom:], payload)
+	return len(state.returnPath.ReturnPackets([][]byte{packet})) == 0
+}
+
+type returnPathState struct {
+	returnPath tun.Return
+	headroom   int
 }
 
 func (e *Endpoint) resetAuthLocked(now time.Time) {

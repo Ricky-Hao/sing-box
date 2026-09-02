@@ -27,11 +27,12 @@ func UncompressedMessageLen(message *dns.Msg) int {
 
 // PackCompressedMessage packs message with DNS name compression enabled.
 func PackCompressedMessage(message *dns.Msg, buffer []byte) ([]byte, error) {
-	compressed := compressedMessage(message)
+	compressed := copyDNSMessage(message)
+	compressed.Compress = true
 	return compressed.PackBuffer(buffer)
 }
 
-func TruncateDNSMessage(request *dns.Msg, response *dns.Msg, headroom int) (*buf.Buffer, error) {
+func TruncateDNSMessage(request *dns.Msg, response *dns.Msg, frontHeadroom int, rearHeadroom int) (*buf.Buffer, error) {
 	maxLen := 512
 	if edns0Option := request.IsEdns0(); edns0Option != nil {
 		if udpSize := int(edns0Option.UDPSize()); udpSize > 512 {
@@ -39,18 +40,41 @@ func TruncateDNSMessage(request *dns.Msg, response *dns.Msg, headroom int) (*buf
 		}
 	}
 	compressedResponseLen := CompressedMessageLen(response)
+	packedResponse := copyDNSMessage(response)
+	packedResponse.Compress = true
 	if compressedResponseLen > maxLen {
-		response = response.Copy()
-		response.Compress = true
-		response.Truncate(maxLen)
+		packedResponse.Truncate(maxLen)
+		packedResponse.Compress = true
 	}
-	buffer := buf.NewSize(headroom*2 + 1 + UncompressedMessageLen(response))
-	buffer.Resize(headroom, 0)
-	rawMessage, err := PackCompressedMessage(response, buffer.FreeBytes())
+	buffer := buf.NewSize(frontHeadroom + UncompressedMessageLen(packedResponse) + 1 + rearHeadroom)
+	buffer.Resize(frontHeadroom, 0)
+	rawMessage, err := packedResponse.PackBuffer(buffer.FreeBytes())
 	if err != nil {
 		buffer.Release()
 		return nil, err
 	}
 	buffer.Truncate(len(rawMessage))
 	return buffer, nil
+}
+
+func copyDNSMessage(message *dns.Msg) *dns.Msg {
+	copied := *message
+	copied.Question = append([]dns.Question(nil), message.Question...)
+	copied.Answer = copyDNSRecords(message.Answer)
+	copied.Ns = copyDNSRecords(message.Ns)
+	copied.Extra = copyDNSRecords(message.Extra)
+	return &copied
+}
+
+func copyDNSRecords(records []dns.RR) []dns.RR {
+	if records == nil {
+		return nil
+	}
+	copied := make([]dns.RR, len(records))
+	for index, record := range records {
+		if record != nil {
+			copied[index] = dns.Copy(record)
+		}
+	}
+	return copied
 }

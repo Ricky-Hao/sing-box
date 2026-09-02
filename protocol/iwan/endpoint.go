@@ -16,7 +16,6 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/route/rule"
 	"github.com/sagernet/sing-box/transport/iwan"
 	"github.com/sagernet/sing-tun"
 	"github.com/sagernet/sing/common"
@@ -30,8 +29,8 @@ import (
 
 var (
 	_ adapter.OutboundWithPreferredRoutes = (*Endpoint)(nil)
+	_ adapter.FlowOutbound                = (*Endpoint)(nil)
 	_ dialer.PacketDialerWithDestination  = (*Endpoint)(nil)
-	_ adapter.DirectRouteOutbound         = (*Endpoint)(nil)
 )
 
 func RegisterEndpoint(registry *endpoint.Registry) {
@@ -128,37 +127,54 @@ func (e *Endpoint) Close() error {
 	return e.endpoint.Close()
 }
 
-func (e *Endpoint) PrepareConnection(network string, source M.Socksaddr, destination M.Socksaddr, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	if !e.ready() {
-		return nil, E.New("iWAN is not ready yet")
-	}
-	var ipVersion uint8
-	if !destination.IsIPv6() {
-		ipVersion = 4
-	} else {
-		ipVersion = 6
-	}
-	routeDestination, err := e.router.PreMatch(adapter.InboundContext{
-		Inbound:     e.Tag(),
-		InboundType: e.Type(),
-		IPVersion:   ipVersion,
-		Network:     network,
-		Source:      source,
-		Destination: destination,
-	}, routeContext, timeout, false)
-	if err != nil {
-		switch {
-		case rule.IsBypassed(err):
-			err = nil
-		case rule.IsRejected(err):
-			e.logger.Trace("reject ", network, " connection from ", source.AddrString(), " to ", destination.AddrString())
-		default:
-			if network == N.NetworkICMP {
-				e.logger.Warn(E.Cause(err, "link ", network, " connection from ", source.AddrString(), " to ", destination.AddrString()))
-			}
+func (e *Endpoint) PreMatchFlow(network string, destination netip.Addr) adapter.PreMatchAction {
+	return adapter.PreMatchFlow
+}
+
+func (e *Endpoint) PortAddresses() (netip.Addr, netip.Addr) {
+	return e.endpoint.PortAddresses()
+}
+
+func (e *Endpoint) PortMTU() uint32 {
+	return e.endpoint.PortMTU()
+}
+
+func (e *Endpoint) AttachReturn(returnPath tun.Return) error {
+	return e.endpoint.AttachReturn(returnPath)
+}
+
+func (e *Endpoint) DetachReturn(returnPath tun.Return) error {
+	return e.endpoint.DetachReturn(returnPath)
+}
+
+func (e *Endpoint) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	for _, localPrefix := range e.getLocalAddresses() {
+		if localPrefix.Contains(destination.Addr()) {
+			return tun.FlowVerdict{Action: tun.ActionAccept}
 		}
 	}
-	return routeDestination, err
+	return adapter.JudgeFlow(e.router, e.Tag(), e.Type(), network, source, destination, firstPacket)
+}
+
+func (e *Endpoint) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+	ctx := log.ContextWithNewID(e.ctx)
+	metadata := adapter.InboundContext{
+		Inbound:     e.Tag(),
+		InboundType: e.Type(),
+		Network:     N.NetworkUDP,
+		Source:      source,
+		Destination: destination,
+		Protocol:    C.ProtocolDNS,
+	}
+	e.logger.InfoContext(ctx, "inbound DNS packet from ", source)
+	e.router.HijackDNSPacket(ctx, payload, writer, metadata)
+}
+
+func (e *Endpoint) WritePackets(packets [][]byte) error {
+	if !e.ready() {
+		return E.New("iWAN is not ready yet")
+	}
+	return e.endpoint.WritePackets(packets)
 }
 
 func (e *Endpoint) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
@@ -260,30 +276,17 @@ func (e *Endpoint) ListenPacket(ctx context.Context, destination M.Socksaddr) (n
 	return packetConn, nil
 }
 
-func (e *Endpoint) PreferredDomain(domain string) bool {
+func (e *Endpoint) PreferredDomain(metadata *adapter.InboundContext, domain string) bool {
 	return false
 }
 
-func (e *Endpoint) PreferredAddress(address netip.Addr) bool {
+func (e *Endpoint) PreferredAddress(metadata *adapter.InboundContext, address netip.Addr) bool {
 	if !e.ready() {
 		return false
 	}
 	return common.Any(e.allowedIPs, func(prefix netip.Prefix) bool {
 		return prefix.Contains(address)
 	})
-}
-
-func (e *Endpoint) NewDirectRouteConnection(metadata adapter.InboundContext, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	ctx := e.ctx
-	var cancel context.CancelFunc
-	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
-	}
-	if err := e.waitReady(ctx); err != nil {
-		return nil, err
-	}
-	return e.endpoint.NewDirectRouteConnection(metadata, routeContext, timeout)
 }
 
 func (e *Endpoint) ready() bool {

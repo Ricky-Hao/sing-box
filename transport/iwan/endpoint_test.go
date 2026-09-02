@@ -136,6 +136,82 @@ func TestEndpointIgnoresStaleOpenAck(t *testing.T) {
 	triggerOpen(t, endpoint, reconnectedServer)
 }
 
+func TestEndpointRejectsWrongSessionAndEncryptionMode(t *testing.T) {
+	t.Parallel()
+	endpoint, server, cleanup := startTestEndpoint(t)
+	defer cleanup()
+	token := [2]byte{0x12, 0x34}
+	sessionID := [4]byte{0xde, 0xad, 0xbe, 0xef}
+	establishEndpoint(t, endpoint, server, token, sessionID, netip.MustParseAddr("10.20.30.40"))
+	endpoint.access.Lock()
+	conn := endpoint.conn
+	xorKey := endpoint.xorKey
+	endpoint.access.Unlock()
+	payload := buildIPv4Packet(netip.MustParseAddr("1.1.1.1"), netip.MustParseAddr("10.20.30.40"))
+	wrongToken := buildDataPacket(token, sessionID, xorKey, true, payload, nil)
+	wrongToken[2] ^= 0xff
+	if endpoint.handlePacket(conn, wrongToken) {
+		t.Fatal("accepted DATA with wrong token")
+	}
+	wrongSession := buildDataPacket(token, sessionID, xorKey, true, payload, nil)
+	wrongSession[4] ^= 0xff
+	if endpoint.handlePacket(conn, wrongSession) {
+		t.Fatal("accepted DATA with wrong session")
+	}
+	plaintext := buildDataPacket(token, sessionID, xorKey, false, payload, nil)
+	if endpoint.handlePacket(conn, plaintext) {
+		t.Fatal("accepted plaintext DATA for encrypted session")
+	}
+}
+
+func TestEndpointConnectedUDPRejectsOpenAckFromUnexpectedSource(t *testing.T) {
+	t.Parallel()
+	server, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer server.Close()
+	endpoint, err := NewEndpoint(EndpointOptions{
+		Context:  t.Context(),
+		Logger:   logger.NOP(),
+		Dialer:   udpTestDialer{},
+		Server:   M.SocksaddrFromNet(server.LocalAddr()).Unwrap(),
+		Username: "myuser",
+		Password: "mypassword",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer endpoint.Close()
+	if err = endpoint.Start(); err != nil {
+		t.Fatal(err)
+	}
+	endpoint.onTimer(time.Now().Add(authRetryInterval))
+	buffer := make([]byte, fragmentOutputSize)
+	_ = server.SetReadDeadline(time.Now().Add(time.Second))
+	_, clientAddress, err := server.ReadFrom(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attacker, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attacker.Close()
+	openAck := buildTestOpenAck([2]byte{0x12, 0x34}, [4]byte{0xde, 0xad, 0xbe, 0xef}, netip.MustParseAddr("10.20.30.40"))
+	if _, err = attacker.WriteTo(openAck, clientAddress); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(20 * time.Millisecond)
+	if endpoint.Ready() {
+		t.Fatal("accepted OPENACK from unexpected UDP source")
+	}
+	if _, err = server.WriteTo(openAck, clientAddress); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, endpoint.Ready)
+}
+
 func TestEndpointDataTimeoutSendsClose(t *testing.T) {
 	t.Parallel()
 	endpoint, server, cleanup := startTestEndpoint(t)
@@ -215,6 +291,65 @@ func TestEndpointWaitReadyReturnsContextError(t *testing.T) {
 	defer cancel()
 	if err := endpoint.WaitReady(waitCtx); err == nil {
 		t.Fatal("expected context error")
+	}
+}
+
+func TestEndpointFlowPortWritesAndReturnsPackets(t *testing.T) {
+	t.Parallel()
+	endpoint, server, cleanup := startTestEndpoint(t)
+	defer cleanup()
+	token := [2]byte{0x12, 0x34}
+	sessionID := [4]byte{0xde, 0xad, 0xbe, 0xef}
+	address := netip.MustParseAddr("10.20.30.40")
+	establishEndpoint(t, endpoint, server, token, sessionID, address)
+	inet4, inet6 := endpoint.PortAddresses()
+	if inet4 != address || inet6.IsValid() {
+		t.Fatalf("unexpected port addresses: %v %v", inet4, inet6)
+	}
+	if endpoint.PortMTU() != defaultMTU {
+		t.Fatalf("unexpected port MTU: %d", endpoint.PortMTU())
+	}
+	outboundPayload := buildIPv4Packet(address, netip.MustParseAddr("1.1.1.1"))
+	writeDone := make(chan error, 1)
+	go func() {
+		writeDone <- endpoint.WritePackets([][]byte{outboundPayload})
+	}()
+	buffer := make([]byte, fragmentOutputSize)
+	_ = server.SetReadDeadline(time.Now().Add(time.Second))
+	n, err := server.Read(buffer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = <-writeDone; err != nil {
+		t.Fatal(err)
+	}
+	if buffer[0] != packetDataEnc {
+		t.Fatalf("unexpected outbound packet type: %x", buffer[0])
+	}
+	decoded := append([]byte(nil), buffer[headerSize:n]...)
+	xorData(endpoint.xorKey, decoded)
+	if string(decoded) != string(outboundPayload) {
+		t.Fatal("flow port changed outbound payload")
+	}
+	returnPath := &recordingReturnPath{packets: make(chan []byte, 1)}
+	if err = endpoint.AttachReturn(returnPath); err != nil {
+		t.Fatal(err)
+	}
+	inboundPayload := buildIPv4Packet(netip.MustParseAddr("1.1.1.1"), address)
+	inboundPacket := buildDataPacket(token, sessionID, endpoint.xorKey, true, inboundPayload, nil)
+	if _, err = server.Write(inboundPacket); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case returned := <-returnPath.packets:
+		if string(returned) != string(inboundPayload) {
+			t.Fatal("return path changed inbound payload")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("inbound packet was not offered to return path")
+	}
+	if err = endpoint.DetachReturn(returnPath); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -360,6 +495,21 @@ func waitFor(t *testing.T, condition func() bool) {
 
 type pipeDialer struct {
 	servers chan net.Conn
+}
+
+type recordingReturnPath struct {
+	packets chan []byte
+}
+
+func (r *recordingReturnPath) ReturnHeadroom() int {
+	return 4
+}
+
+func (r *recordingReturnPath) ReturnPackets(packets [][]byte) [][]byte {
+	for _, packet := range packets {
+		r.packets <- append([]byte(nil), packet[r.ReturnHeadroom():]...)
+	}
+	return packets[:0]
 }
 
 func (d *pipeDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {

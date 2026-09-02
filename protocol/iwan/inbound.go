@@ -14,9 +14,9 @@ import (
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-box/route/rule"
 	"github.com/sagernet/sing-box/transport/iwan"
 	"github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing-tun/gtcpip/header"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	M "github.com/sagernet/sing/common/metadata"
@@ -135,38 +135,74 @@ func (i *Inbound) Close() error {
 	)
 }
 
-func (i *Inbound) PrepareConnection(network string, source M.Socksaddr, destination M.Socksaddr, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	var ipVersion uint8
-	if !destination.IsIPv6() {
-		ipVersion = 4
-	} else {
-		ipVersion = 6
+func (i *Inbound) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	var networkName string
+	switch network {
+	case uint8(header.TCPProtocolNumber):
+		networkName = N.NetworkTCP
+	case uint8(header.UDPProtocolNumber):
+		networkName = N.NetworkUDP
+	case uint8(header.ICMPv4ProtocolNumber), uint8(header.ICMPv6ProtocolNumber):
+		networkName = N.NetworkICMP
+	default:
+		return tun.FlowVerdict{Action: tun.ActionAccept}
 	}
 	metadata := adapter.InboundContext{
 		Inbound:     i.Tag(),
 		InboundType: i.Type(),
-		IPVersion:   ipVersion,
-		Network:     network,
+		Network:     networkName,
+		Source:      M.SocksaddrFromNetIP(source),
+		Destination: M.SocksaddrFromNetIP(destination),
+		User:        i.server.UserByAddress(source.Addr()),
+	}
+	if networkName == N.NetworkICMP {
+		metadata.Source.Port = 0
+		metadata.Destination.Port = 0
+	}
+	result := i.router.PreMatch(metadata, firstPacket)
+	switch result.Action {
+	case adapter.PreMatchFlow:
+		port, isPort := result.Outbound.(tun.Port)
+		if !isPort {
+			return tun.FlowVerdict{Action: tun.ActionAccept}
+		}
+		verdict := tun.FlowVerdict{Action: tun.ActionFlow, Port: port, UDPTimeout: result.UDPTimeout, NewTracker: result.NewTracker}
+		if result.Destination.IsValid() {
+			destinationPort := result.Destination.Port()
+			if networkName == N.NetworkICMP {
+				destinationPort = destination.Port()
+			}
+			verdict.Destination = netip.AddrPortFrom(result.Destination.Addr(), destinationPort)
+		}
+		return verdict
+	case adapter.PreMatchReject:
+		return tun.FlowVerdict{Action: tun.ActionReject}
+	case adapter.PreMatchDrop:
+		return tun.FlowVerdict{Action: tun.ActionDrop}
+	case adapter.PreMatchBypass:
+		return tun.FlowVerdict{Action: tun.ActionBypass}
+	case adapter.PreMatchHijackDNS:
+		return tun.FlowVerdict{Action: tun.ActionHijackDNS}
+	default:
+		return tun.FlowVerdict{Action: tun.ActionAccept}
+	}
+}
+
+func (i *Inbound) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
+	ctx := log.ContextWithNewID(i.ctx)
+	metadata := adapter.InboundContext{
+		Inbound:     i.Tag(),
+		InboundType: i.Type(),
+		Network:     N.NetworkUDP,
 		Source:      source,
 		Destination: destination,
+		Protocol:    C.ProtocolDNS,
 	}
 	if source.Addr.IsValid() {
 		metadata.User = i.server.UserByAddress(source.Addr)
 	}
-	routeDestination, err := i.router.PreMatch(metadata, routeContext, timeout, false)
-	if err != nil {
-		switch {
-		case rule.IsBypassed(err):
-			err = nil
-		case rule.IsRejected(err):
-			i.logger.Trace("reject ", network, " connection from ", source.AddrString(), " to ", destination.AddrString())
-		default:
-			if network == N.NetworkICMP {
-				i.logger.Warn(E.Cause(err, "link ", network, " connection from ", source.AddrString(), " to ", destination.AddrString()))
-			}
-		}
-	}
-	return routeDestination, err
+	i.logger.InfoContext(ctx, "inbound DNS packet from ", source)
+	i.router.HijackDNSPacket(ctx, payload, writer, metadata)
 }
 
 func (i *Inbound) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {

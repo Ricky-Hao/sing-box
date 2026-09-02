@@ -107,6 +107,39 @@ func TestBuildEchoPacket(t *testing.T) {
 	}
 }
 
+func TestParseControlPacketsRejectMalformedInput(t *testing.T) {
+	validOpen, err := buildOpenPacket("myuser", "mypassword", 1400, true, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	validAck := buildOpenAckPacket([2]byte{1, 2}, [4]byte{3, 4, 5, 6}, 1400, netip.MustParseAddr("10.66.0.2"), true, nil)
+	tests := []struct {
+		name  string
+		parse func([]byte) error
+		data  []byte
+	}{
+		{"short OPEN", func(packet []byte) error { _, parseErr := parseOpenPacket(packet); return parseErr }, []byte{packetOpen}},
+		{"bad OPEN signature", func(packet []byte) error { _, parseErr := parseOpenPacket(packet); return parseErr }, append([]byte(nil), validOpen...)},
+		{"truncated OPEN TLV", func(packet []byte) error { _, parseErr := parseOpenPacket(packet); return parseErr }, append(append([]byte(nil), validOpen...), 1)},
+		{"zero OPEN TLV length", func(packet []byte) error { _, parseErr := parseOpenPacket(packet); return parseErr }, append(append([]byte(nil), validOpen...), 1, 0)},
+		{"short OPENACK", func(packet []byte) error { _, parseErr := parseOpenAck(packet); return parseErr }, []byte{packetOpenAck}},
+		{"bad OPENACK signature", func(packet []byte) error { _, parseErr := parseOpenAck(packet); return parseErr }, append([]byte(nil), validAck...)},
+		{"truncated OPENACK TLV", func(packet []byte) error { _, parseErr := parseOpenAck(packet); return parseErr }, append(append([]byte(nil), validAck...), 4)},
+		{"oversized OPENACK TLV", func(packet []byte) error { _, parseErr := parseOpenAck(packet); return parseErr }, append(append([]byte(nil), validAck...), 4, 9)},
+	}
+	validOpenCopy := tests[1].data
+	validOpenCopy[headerSize] ^= 0xff
+	validAckCopy := tests[5].data
+	validAckCopy[headerSize] ^= 0xff
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if parseErr := test.parse(test.data); parseErr == nil {
+				t.Fatal("accepted malformed control packet")
+			}
+		})
+	}
+}
+
 func collectTLVs(t *testing.T, data []byte) map[byte][]byte {
 	t.Helper()
 	tlvs := make(map[byte][]byte)

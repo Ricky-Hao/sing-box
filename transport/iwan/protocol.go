@@ -44,7 +44,10 @@ const (
 	linkQueueSize      = 1024
 	udpSocketBuffer    = 4 * 1024 * 1024
 	udpBatchSize       = 16
+	maxTLVValueLength  = int(^byte(0)) - 2
 )
+
+var errUsernameTooLong = E.New("username exceeds OPEN TLV maximum")
 
 type endpointState uint8
 
@@ -118,7 +121,17 @@ func encryptedPassword(username string, password string) ([16]byte, error) {
 	return encrypted, nil
 }
 
+func validateUsername(username string) error {
+	if len(username) > maxTLVValueLength {
+		return E.Cause(errUsernameTooLong, "iWAN username is ", len(username), " bytes, maximum is ", maxTLVValueLength)
+	}
+	return nil
+}
+
 func buildOpenPacket(username string, password string, mtu uint32, encrypt bool, pipeID uint16, pipeIndex uint8) ([]byte, error) {
+	if err := validateUsername(username); err != nil {
+		return nil, err
+	}
 	if mtu == 0 {
 		mtu = defaultMTU
 	}
@@ -170,12 +183,12 @@ func parseOpenPacket(packet []byte) (openInfo, error) {
 	tlvs := packet[signedHeader:]
 	for len(tlvs) > 0 {
 		if len(tlvs) < 2 {
-			break
+			return openInfo{}, E.New("truncated OPEN TLV")
 		}
 		tlvType := tlvs[0]
 		tlvLength := int(tlvs[1])
 		if tlvLength < 2 || tlvLength > len(tlvs) {
-			break
+			return openInfo{}, E.New("invalid OPEN TLV length: ", tlvLength)
 		}
 		value := tlvs[2:tlvLength]
 		switch tlvType {
@@ -302,12 +315,12 @@ func parseOpenAck(packet []byte) (openAckInfo, error) {
 	tlvs := packet[signedHeader:]
 	for len(tlvs) > 0 {
 		if len(tlvs) < 2 {
-			break
+			return openAckInfo{}, E.New("truncated OPENACK TLV")
 		}
 		tlvType := tlvs[0]
 		tlvLength := int(tlvs[1])
 		if tlvLength < 2 || tlvLength > len(tlvs) {
-			break
+			return openAckInfo{}, E.New("invalid OPENACK TLV length: ", tlvLength)
 		}
 		value := tlvs[2:tlvLength]
 		switch tlvType {

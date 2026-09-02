@@ -125,6 +125,96 @@ func TestServerRejectsSameSourceDifferentUserWithoutCorruption(t *testing.T) {
 	}
 }
 
+func TestServerRejectsInvalidAuthenticationWithoutSession(t *testing.T) {
+	t.Parallel()
+	server, packetConn, remote, cleanup := startManualTestServer(t, []ServerUser{{Username: "myuser", Password: "mypassword"}})
+	defer cleanup()
+	openPacket, err := buildOpenPacket("myuser", "wrong-password", defaultMTU, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if server.handleOpen(packetConn, remote, openPacket) {
+		t.Fatal("accepted invalid credentials")
+	}
+	server.access.Lock()
+	defer server.access.Unlock()
+	if len(server.byRemote) != 0 || len(server.byAddress) != 0 || len(server.byUsername) != 0 {
+		t.Fatal("authentication failure created session state")
+	}
+}
+
+func TestServerRejectsWrongTokenAndSession(t *testing.T) {
+	t.Parallel()
+	server, packetConn, remote, cleanup := startManualTestServer(t, []ServerUser{{Username: "myuser", Password: "mypassword"}})
+	defer cleanup()
+	openPacket, err := buildOpenPacket("myuser", "mypassword", defaultMTU, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !server.handleOpen(packetConn, remote, openPacket) {
+		t.Fatal("OPEN failed")
+	}
+	server.access.Lock()
+	session := server.byRemote[remote]
+	server.access.Unlock()
+	payload := buildIPv4Packet(session.address, netip.MustParseAddr("1.1.1.1"))
+	wrongToken := wrapDataPacket(session, payload)
+	wrongToken[2] ^= 0xff
+	if server.handleData(remote, wrongToken) {
+		t.Fatal("accepted DATA with wrong token")
+	}
+	wrongSession := wrapDataPacket(session, payload)
+	wrongSession[4] ^= 0xff
+	if server.handleData(remote, wrongSession) {
+		t.Fatal("accepted DATA with wrong session")
+	}
+}
+
+func TestServerRejectsDataEncryptionModeMismatch(t *testing.T) {
+	t.Parallel()
+	server, packetConn, remote, cleanup := startManualTestServer(t, []ServerUser{{Username: "myuser", Password: "mypassword"}})
+	defer cleanup()
+	openPacket, err := buildOpenPacket("myuser", "mypassword", defaultMTU, false, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !server.handleOpen(packetConn, remote, openPacket) {
+		t.Fatal("OPEN failed")
+	}
+	server.access.Lock()
+	session := server.byRemote[remote]
+	server.access.Unlock()
+	packet := wrapDataPacket(session, buildIPv4Packet(session.address, netip.MustParseAddr("1.1.1.1")))
+	packet[0] = packetDataEnc
+	if server.handleData(remote, packet) {
+		t.Fatal("accepted encrypted DATA for plaintext session")
+	}
+}
+
+func TestServerAcceptsAuthenticatedEncryptedData(t *testing.T) {
+	t.Parallel()
+	server, packetConn, remote, cleanup := startManualTestServer(t, []ServerUser{{Username: "myuser", Password: "mypassword"}})
+	defer cleanup()
+	server.options.Encrypt = true
+	openPacket, err := buildOpenPacket("myuser", "mypassword", defaultMTU, true, 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !server.handleOpen(packetConn, remote, openPacket) {
+		t.Fatal("OPEN failed")
+	}
+	server.access.Lock()
+	session := server.byRemote[remote]
+	server.access.Unlock()
+	packet := wrapDataPacket(session, buildIPv4Packet(session.address, netip.MustParseAddr("1.1.1.1")))
+	if packet[0] != packetDataEnc {
+		t.Fatal("encrypted session produced plaintext DATA")
+	}
+	if !server.handleData(remote, packet) {
+		t.Fatal("rejected authenticated encrypted DATA")
+	}
+}
+
 func TestServerDataPathAndReturnDemux(t *testing.T) {
 	t.Parallel()
 	handler := &recordingHandler{
@@ -460,8 +550,11 @@ type recordingHandler struct {
 	packetConnections chan packetConnectionRecord
 }
 
-func (h *recordingHandler) PrepareConnection(network string, source M.Socksaddr, destination M.Socksaddr, routeContext tun.DirectRouteContext, timeout time.Duration) (tun.DirectRouteDestination, error) {
-	return nil, nil
+func (h *recordingHandler) JudgeFlow(network uint8, source netip.AddrPort, destination netip.AddrPort, firstPacket []byte) tun.FlowVerdict {
+	return tun.FlowVerdict{Action: tun.ActionAccept}
+}
+
+func (h *recordingHandler) NewDNSPacket(payload []byte, source M.Socksaddr, destination M.Socksaddr, writer N.PacketWriter) {
 }
 
 func (h *recordingHandler) NewConnectionEx(ctx context.Context, conn net.Conn, source M.Socksaddr, destination M.Socksaddr, onClose N.CloseHandlerFunc) {
