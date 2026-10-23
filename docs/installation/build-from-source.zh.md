@@ -6,6 +6,11 @@ icon: material/file-code
 
 ## :material-graph: 要求
 
+### sing-box 1.14
+
+* 最低版本由 `go.mod` 指定，当前为 Go 1.25.5。
+* `v1.14.4` 发布构建使用 Go 1.26.10；本 fork 保留的 devcontainer 和 Test/Lint 使用 Go 1.26.7。
+
 ### sing-box 1.11
 
 * Go 1.23.1 - ~
@@ -55,6 +60,7 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 | `with_grpc`                        | :material-close:️ | Build with standard gRPC support, see [V2Ray Transport#gRPC](/zh/configuration/shared/v2ray-transport#grpc).                                                                                                                                                                                                                      |
 | `with_dhcp`                        | :material-check:  | Build with DHCP support, see [DHCP DNS transport](/zh/configuration/dns/server/).                                                                                                                                                                                                                                                 |
 | `with_wireguard`                   | :material-check:  | Build with WireGuard support, see [WireGuard outbound](/zh/configuration/outbound/wireguard/).                                                                                                                                                                                                                                    |
+| `with_iwan`                        | :material-check:  | 本 fork 的 [iWAN 端点](/zh/configuration/endpoint/iwan/)和[入站](/zh/configuration/inbound/iwan/)，必须同时启用 `with_gvisor`。CLI 和 mobile/libbox 默认标签均包含这两个标记。 |
 | `with_utls`                        | :material-check:  | Build with [uTLS](https://github.com/refraction-networking/utls) support for TLS outbound, see [TLS](/zh/configuration/shared/tls#utls).                                                                                                                                                                                          |
 | `with_acme`                        | :material-check:  | Build with ACME TLS certificate issuer support, see [TLS](/zh/configuration/shared/tls/).                                                                                                                                                                                                                                         |
 | `with_clash_api`                   | :material-check:  | Build with Clash API support, see [Experimental](/zh/configuration/experimental#clash-api-fields).                                                                                                                                                                                                                                |
@@ -89,6 +95,8 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 | `release/DEFAULT_BUILD_TAGS_WINDOWS` | Windows 的默认标签（包含 `with_purego`）。 |
 | `release/DEFAULT_BUILD_TAGS_OTHERS` | 其他平台的默认标签（不含 `with_naive_outbound`）。 |
 | `release/LDFLAGS` | 必需的链接器标志（参见上文）。 |
+
+本 fork 的 Actions 发布产物仅包含 `arm64-v8a` SFA APK，以及 Linux、Windows、Darwin、FreeBSD 的 `amd64`/`arm64` CLI 压缩包；Linux 仅保留 pure Go 和 musl。以下上游支持表不表示本 fork 会发布 glibc、SFM、deb 或 OpenWrt 产物。SFA 发布必须配置四项稳定签名秘密，不会生成临时签名密钥。
 
 ## :material-layers: with_naive_outbound
 

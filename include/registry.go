@@ -56,6 +56,7 @@ func InboundRegistry() *inbound.Registry {
 	redirect.RegisterRedirect(registry)
 	redirect.RegisterTProxy(registry)
 	direct.RegisterInbound(registry)
+	registerIWANInbound(registry)
 
 	socks.RegisterInbound(registry)
 	http.RegisterInbound(registry)
@@ -114,6 +115,7 @@ func EndpointRegistry() *endpoint.Registry {
 	registerOpenConnectEndpoint(registry)
 	registerOpenVPNEndpoints(registry)
 	registerTailscaleEndpoint(registry)
+	registerIWANEndpoint(registry)
 
 	return registry
 }

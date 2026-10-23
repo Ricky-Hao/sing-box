@@ -33,6 +33,7 @@
 | `anytls`      | [AnyTLS](./anytls/)           | TCP              |
 | `snell`       | [Snell](./snell/)             | TCP              |
 | `tun`         | [Tun](./tun/)                 | :material-close: |
+| `iwan`        | [iWAN](./iwan/)               | :material-close: |
 | `redirect`    | [Redirect](./redirect/)       | :material-close: |
 | `tproxy`      | [TProxy](./tproxy/)           | :material-close: |
 | `cloudflared` | [Cloudflared](./cloudflared/) | :material-close: |
