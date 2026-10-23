@@ -3,6 +3,7 @@ package urltest
 import (
 	"context"
 	"crypto/tls"
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -103,6 +104,9 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 	if err != nil {
 		return
 	}
+	if linkURL.Scheme == "tcp" {
+		return tcpTest(ctx, linkURL, detour)
+	}
 	hostname := linkURL.Hostname()
 	port := linkURL.Port()
 	if port == "" {
@@ -119,6 +123,7 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 	if err != nil {
 		return
 	}
+
 	defer instance.Close()
 	if N.NeedHandshakeForWrite(instance) {
 		start = time.Now()
@@ -148,6 +153,22 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
 		return
 	}
 	resp.Body.Close()
+	t = uint16(time.Since(start) / time.Millisecond)
+	return
+}
+
+func tcpTest(ctx context.Context, linkURL *url.URL, detour N.Dialer) (t uint16, err error) {
+	hostname := linkURL.Hostname()
+	port := linkURL.Port()
+	if hostname == "" || port == "" {
+		return 0, errors.New("missing tcp test host or port")
+	}
+	start := time.Now()
+	instance, err := detour.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddrHostPortStr(hostname, port))
+	if err != nil {
+		return 0, err
+	}
+	_ = instance.Close()
 	t = uint16(time.Since(start) / time.Millisecond)
 	return
 }

@@ -30,6 +30,8 @@ List of outbound tags to test.
 
 The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
 
+Use `tcp://host:port` to perform a pure TCP connect probe without HTTP or TLS overhead.
+
 #### interval
 
 The test interval. `3m` will be used if empty.
