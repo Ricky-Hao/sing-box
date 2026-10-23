@@ -31,6 +31,11 @@ type OutboundWithMultiplex interface {
 	MultiplexEnabled() bool
 }
 
+// OutboundConnectionFailureListener is notified after the failed leaf's URL test history is removed.
+type OutboundConnectionFailureListener interface {
+	ConnectionFailed(outboundTag string)
+}
+
 type FlowOutbound interface {
 	Outbound
 	tun.Port

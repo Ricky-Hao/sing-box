@@ -286,7 +286,13 @@ func (m *ConnectionManager) deleteURLTestHistory(chain []adapter.Outbound) {
 		_, isURLTestGroup := it.(adapter.URLTestGroup)
 		return isURLTestGroup
 	}) {
-		m.urlTestHistory.DeleteURLTestHistory(chain[len(chain)-1].Tag())
+		failedTag := chain[len(chain)-1].Tag()
+		m.urlTestHistory.DeleteURLTestHistory(failedTag)
+		for _, outbound := range slices.Backward(chain) {
+			if listener, loaded := outbound.(adapter.OutboundConnectionFailureListener); loaded {
+				listener.ConnectionFailed(failedTag)
+			}
+		}
 	}
 }
 
