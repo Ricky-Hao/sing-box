@@ -58,6 +58,7 @@ func TruncateDNSMessage(request *dns.Msg, response *dns.Msg, frontHeadroom int, 
 }
 
 func copyDNSMessage(message *dns.Msg) *dns.Msg {
+	// PackBuffer updates EDNS records, so copy records shared by cached responses.
 	copied := *message
 	copied.Question = append([]dns.Question(nil), message.Question...)
 	copied.Answer = copyDNSRecords(message.Answer)

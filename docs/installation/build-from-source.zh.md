@@ -6,6 +6,11 @@ icon: material/file-code
 
 ## :material-graph: 要求
 
+### sing-box 1.14
+
+* 最低版本由 `go.mod` 指定，当前为 Go 1.25.5。
+* `v1.14.4` 发布构建使用 Go 1.26.10；本 fork 保留的 devcontainer 和 Test/Lint 使用 Go 1.26.7。
+
 ### sing-box 1.11
 
 * Go 1.23.1 - ~
@@ -55,6 +60,7 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 | `with_grpc`                        | :material-close:️ | Build with standard gRPC support, see [V2Ray Transport#gRPC](/zh/configuration/shared/v2ray-transport#grpc).                                                                                                                                                                                                                      |
 | `with_dhcp`                        | :material-check:  | Build with DHCP support, see [DHCP DNS transport](/zh/configuration/dns/server/).                                                                                                                                                                                                                                                 |
 | `with_wireguard`                   | :material-check:  | Build with WireGuard support, see [WireGuard outbound](/zh/configuration/outbound/wireguard/).                                                                                                                                                                                                                                    |
+| `with_iwan`                        | :material-check:  | 本 fork 的 [iWAN 端点](/zh/configuration/endpoint/iwan/)和[入站](/zh/configuration/inbound/iwan/)，必须同时启用 `with_gvisor`。CLI 和 mobile/libbox 默认标签均包含这两个标记。 |
 | `with_utls`                        | :material-check:  | Build with [uTLS](https://github.com/refraction-networking/utls) support for TLS outbound, see [TLS](/zh/configuration/shared/tls#utls).                                                                                                                                                                                          |
 | `with_acme`                        | :material-check:  | Build with ACME TLS certificate issuer support, see [TLS](/zh/configuration/shared/tls/).                                                                                                                                                                                                                                         |
 | `with_clash_api`                   | :material-check:  | Build with Clash API support, see [Experimental](/zh/configuration/experimental#clash-api-fields).                                                                                                                                                                                                                                |
@@ -66,8 +72,8 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 | `with_ocm`                         | :material-check:  | 构建 OpenAI Codex Multiplexer 服务支持。                                                                                                                                                                                                                                                                                             |
 | `with_naive_outbound`              | :material-check:  | 构建 NaiveProxy 出站支持，参阅 [NaiveProxy 出站](/zh/configuration/outbound/naive/)。                                                                                                                                                                                                                                                         |
 | `with_cloudflared`                 | :material-check:  | 构建 Cloudflare Tunnel 入站支持，参阅 [Cloudflared 入站](/zh/configuration/inbound/cloudflared/)。                                                                                                                                                                                                                                              |
-| `badlinkname`                      | :material-check:  | 启用 `go:linkname` 以访问标准库内部函数。Go 标准库未提供本项目需要的许多底层 API，且在外部重新实现不切实际。用于 kTLS（内核 TLS 卸载）和原始 TLS 记录操作。                                                                                                                                                                                                                           |
-| `tfogo_checklinkname0`             | :material-check:  | `badlinkname` 的伴随标记。Go 1.23+ 链接器强制限制 `go:linkname` 使用；此标记表示构建使用 `-checklinkname=0` 以绕过该限制。                                                                                                                                                                                                                                |
+| `badlinkname`                      | :material-check:  | 启用 `go:linkname` 以访问标准库内部函数。                                                                                                                                                                                                                                                                                        |
+| `tfogo_checklinkname0`             | :material-check:  | 表示构建使用 `-checklinkname=0` 链接器标志，需要与 `badlinkname` 一起使用。                                                                                                                                                                                                                                                          |
 
 除非您确实知道您正在启用什么，否则不建议更改默认构建标签列表。
 
@@ -77,7 +83,7 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 
 | 标志                                                          | 说明                                                                                                                                                         |
 |-------------------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `-checklinkname=0`                                          | Go 1.23+ 链接器拒绝未授权的 `go:linkname` 使用。此标志禁用该检查，需要与 `badlinkname` 构建标记一起使用。                                                                                   |
+| `-checklinkname=0`                                          | 需要与 `badlinkname` 构建标记一起使用。                                                                                                                                  |
 
 ## :material-package-variant: 下游打包者
 
@@ -89,6 +95,8 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 | `release/DEFAULT_BUILD_TAGS_WINDOWS` | Windows 的默认标签（包含 `with_purego`）。 |
 | `release/DEFAULT_BUILD_TAGS_OTHERS` | 其他平台的默认标签（不含 `with_naive_outbound`）。 |
 | `release/LDFLAGS` | 必需的链接器标志（参见上文）。 |
+
+本 fork 的 Actions 发布产物仅包含 `arm64-v8a` SFA APK，以及 Linux、Windows、Darwin、FreeBSD 的 `amd64`/`arm64` CLI 压缩包；Linux 仅保留 pure Go 和 musl。以下上游支持表不表示本 fork 会发布 glibc、SFM、deb 或 OpenWrt 产物。SFA 发布必须配置四项稳定签名秘密，不会生成临时签名密钥。
 
 ## :material-layers: with_naive_outbound
 

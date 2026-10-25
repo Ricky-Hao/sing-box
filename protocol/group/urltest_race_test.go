@@ -29,7 +29,7 @@ func newURLTestRaceGroup(t *testing.T, outbounds ...adapter.Outbound) *URLTestGr
 }
 
 func markURLTestRaceHealthy(group *URLTestGroup, outbound adapter.Outbound, delay uint16) {
-	group.history.StoreURLTestHistory(RealTag(group.outbound, outbound), &adapter.URLTestHistory{
+	group.history.StoreURLTestHistory(RealTag(outbound, N.NetworkTCP), &adapter.URLTestHistory{
 		Time:  time.Now(),
 		Delay: delay,
 	})
@@ -48,8 +48,8 @@ func TestURLTestSelectionUsedByAllRequestSurfaces(t *testing.T) {
 	}
 	destination := M.ParseSocksaddrHostPortStr("example.com", "80")
 
-	if selected := urlTest.Now(); selected != primary.Tag() {
-		t.Fatalf("expected Now to report primary, got %s", selected)
+	if selected := urlTest.Selected(N.NetworkTCP); selected != primary {
+		t.Fatalf("expected Selected to report primary, got %v", selected)
 	}
 	connection, err := urlTest.DialContext(context.Background(), N.NetworkTCP, destination)
 	if err != nil {
@@ -84,7 +84,7 @@ func TestURLTestSelectionConcurrentUpdateAndRequests(t *testing.T) {
 		group:  group,
 	}
 	destination := M.ParseSocksaddrHostPortStr("example.com", "80")
-	primaryTag := RealTag(group.outbound, primary)
+	primaryTag := RealTag(primary, N.NetworkTCP)
 
 	start := make(chan struct{})
 	errCh := make(chan error, 3)
@@ -105,9 +105,9 @@ func TestURLTestSelectionConcurrentUpdateAndRequests(t *testing.T) {
 		defer workers.Done()
 		<-start
 		for range 4_000 {
-			selected := urlTest.Now()
-			if selected != primary.Tag() && selected != secondary.Tag() {
-				errCh <- fmt.Errorf("unexpected selected outbound %q", selected)
+			selected := urlTest.Selected(N.NetworkTCP)
+			if selected != primary && selected != secondary {
+				errCh <- fmt.Errorf("unexpected selected outbound %v", selected)
 				return
 			}
 			runtime.Gosched()
@@ -178,7 +178,7 @@ func TestURLTestSelectionUpdateDoesNotWaitForDial(t *testing.T) {
 	}()
 	<-dialStarted
 
-	group.history.DeleteURLTestHistory(RealTag(group.outbound, primary))
+	group.history.DeleteURLTestHistory(RealTag(primary, N.NetworkTCP))
 	updateCompleted := make(chan struct{})
 	go func() {
 		group.performUpdateCheck()
@@ -200,7 +200,7 @@ func TestURLTestSelectionUpdateDoesNotWaitForDial(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("dial did not complete after it was released")
 	}
-	if selected := urlTest.Now(); selected != secondary.Tag() {
-		t.Fatalf("expected update to select secondary, got %s", selected)
+	if selected := urlTest.Selected(N.NetworkTCP); selected != secondary {
+		t.Fatalf("expected update to select secondary, got %v", selected)
 	}
 }

@@ -111,8 +111,10 @@ func NewEndpoint(ctx context.Context, router adapter.Router, logger log.ContextL
 	return ep, nil
 }
 
-func (e *Endpoint) Start(stage adapter.StartStage) error {
+func (e *Endpoint) Start(stage adapter.StartStage, scope *adapter.Scope) error {
 	switch stage {
+	case adapter.StartStateInitialize:
+		scope.Add(e.Close)
 	case adapter.StartStateStart:
 		e.started.Store(true)
 	case adapter.StartStatePostStart:

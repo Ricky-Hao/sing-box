@@ -60,8 +60,8 @@ func TestFallbackSelectionUsedByAllRequestSurfaces(t *testing.T) {
 	}
 	destination := M.ParseSocksaddrHostPortStr("example.com", "80")
 
-	if selected := fallback.Now(); selected != primary.Tag() {
-		t.Fatalf("expected Now to report primary, got %s", selected)
+	if selected := fallback.Selected(N.NetworkTCP); selected != primary {
+		t.Fatalf("expected Selected to report primary, got %v", selected)
 	}
 	connection, err := fallback.DialContext(context.Background(), N.NetworkTCP, destination)
 	if err != nil {
@@ -96,7 +96,7 @@ func TestFallbackSelectionConcurrentUpdateAndRequests(t *testing.T) {
 		group:  group,
 	}
 	destination := M.ParseSocksaddrHostPortStr("example.com", "80")
-	primaryTag := RealTag(group.outbound, primary)
+	primaryTag := RealTag(primary, N.NetworkTCP)
 
 	start := make(chan struct{})
 	errCh := make(chan error, 3)
@@ -118,9 +118,9 @@ func TestFallbackSelectionConcurrentUpdateAndRequests(t *testing.T) {
 		defer workers.Done()
 		<-start
 		for range 4_000 {
-			selected := fallback.Now()
-			if selected != primary.Tag() && selected != secondary.Tag() {
-				errCh <- fmt.Errorf("unexpected selected outbound %q", selected)
+			selected := fallback.Selected(N.NetworkTCP)
+			if selected != primary && selected != secondary {
+				errCh <- fmt.Errorf("unexpected selected outbound %v", selected)
 				return
 			}
 			runtime.Gosched()
@@ -191,7 +191,7 @@ func TestFallbackSelectionUpdateDoesNotWaitForDial(t *testing.T) {
 	}()
 	<-dialStarted
 
-	group.deleteURLTestHistory(RealTag(group.outbound, primary))
+	group.deleteURLTestHistory(RealTag(primary, N.NetworkTCP))
 	updateCompleted := make(chan struct{})
 	go func() {
 		group.performUpdateCheck()
@@ -213,8 +213,8 @@ func TestFallbackSelectionUpdateDoesNotWaitForDial(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("dial did not complete after it was released")
 	}
-	if selected := fallback.Now(); selected != secondary.Tag() {
-		t.Fatalf("expected update to select secondary, got %s", selected)
+	if selected := fallback.Selected(N.NetworkTCP); selected != secondary {
+		t.Fatalf("expected update to select secondary, got %v", selected)
 	}
 }
 

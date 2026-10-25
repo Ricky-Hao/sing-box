@@ -6,6 +6,11 @@ icon: material/file-code
 
 ## :material-graph: Requirements
 
+### sing-box 1.14
+
+* The minimum version is defined in `go.mod`, currently Go 1.25.5.
+* Release builds for `v1.14.4` use Go 1.26.10; this fork retains Go 1.26.7 for its devcontainer and Test/Lint workflows.
+
 ### sing-box 1.11
 
 * Go 1.23.1 - ~
@@ -51,6 +56,7 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 | `with_grpc`                        | :material-close:️    | Build with standard gRPC support, see [V2Ray Transport#gRPC](/configuration/shared/v2ray-transport#grpc).                                                                                                                                                                                                                      |
 | `with_dhcp`                        | :material-check:     | Build with DHCP support, see [DHCP DNS transport](/configuration/dns/server/).                                                                                                                                                                                                                                                 |
 | `with_wireguard`                   | :material-check:     | Build with WireGuard support, see [WireGuard outbound](/configuration/outbound/wireguard/).                                                                                                                                                                                                                                    |
+| `with_iwan`                        | :material-check:     | This fork's [iWAN endpoint](/configuration/endpoint/iwan/) and [inbound](/configuration/inbound/iwan/). Requires `with_gvisor`; both tags are included in the CLI and mobile/libbox defaults. |
 | `with_utls`                        | :material-check:     | Build with [uTLS](https://github.com/refraction-networking/utls) support for TLS outbound, see [TLS](/configuration/shared/tls#utls).                                                                                                                                                                                          |
 | `with_acme`                        | :material-check:     | Build with ACME TLS certificate issuer support, see [TLS](/configuration/shared/tls/).                                                                                                                                                                                                                                         |
 | `with_clash_api`                   | :material-check:     | Build with Clash API support, see [Experimental](/configuration/experimental#clash-api-fields).                                                                                                                                                                                                                                |
@@ -62,8 +68,8 @@ go build -tags "tag_a tag_b" ./cmd/sing-box
 | `with_ocm`                         | :material-check:     | Build with OpenAI Codex Multiplexer service support.                                                                                                                                                                                                                                                                           |
 | `with_naive_outbound`              | :material-check:     | Build with NaiveProxy outbound support, see [NaiveProxy outbound](/configuration/outbound/naive/).                                                                                                                                                                                                                             |
 | `with_cloudflared`                 | :material-check:     | Build with Cloudflare Tunnel inbound support, see [Cloudflared inbound](/configuration/inbound/cloudflared/).                                                                                                                                                                                                                  |
-| `badlinkname`                      | :material-check:     | Enable `go:linkname` access to internal standard library functions. Required because the Go standard library does not expose many low-level APIs needed by this project, and reimplementing them externally is impractical. Used for kTLS (kernel TLS offload) and raw TLS record manipulation.                                 |
-| `tfogo_checklinkname0`             | :material-check:     | Companion to `badlinkname`. Go 1.23+ enforces `go:linkname` restrictions via the linker; this tag signals the build uses `-checklinkname=0` to bypass that enforcement.                                                                                                                                                       |
+| `badlinkname`                      | :material-check:     | Enable `go:linkname` access to internal standard library functions.                                                                                                                                                                                                                                                            |
+| `tfogo_checklinkname0`             | :material-check:     | Indicates the build uses the `-checklinkname=0` linker flag. Required together with `badlinkname`.                                                                                                                                                                                                                            |
 
 It is not recommended to change the default build tag list unless you really know what you are adding.
 
@@ -73,7 +79,7 @@ The required linker flags for official builds are maintained in `release/LDFLAGS
 
 | Flag                                                        | Description                                                                                                                                                                                                             |
 |-------------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `-checklinkname=0`                                          | Go 1.23+ linker rejects unauthorized `go:linkname` usage. This flag disables the check, required together with the `badlinkname` build tag.                                                                            |
+| `-checklinkname=0`                                          | Required together with the `badlinkname` build tag.                                                                                                                                                                     |
 
 ## :material-package-variant: For Downstream Packagers
 
@@ -85,6 +91,8 @@ The default build tag lists and linker flags are available as files in the repos
 | `release/DEFAULT_BUILD_TAGS_WINDOWS` | Default for Windows (includes `with_purego`). |
 | `release/DEFAULT_BUILD_TAGS_OTHERS` | Default for other platforms (no `with_naive_outbound`). |
 | `release/LDFLAGS` | Required linker flags (see above). |
+
+This fork's Actions releases contain only the `arm64-v8a` SFA APK and `amd64`/`arm64` CLI archives for Linux, Windows, Darwin, and FreeBSD. Linux is limited to pure Go and musl. The upstream support table below does not imply that this fork publishes glibc, SFM, deb, or OpenWrt assets. SFA releases require all four stable signing secrets and never generate temporary signing keys.
 
 ## :material-layers: with_naive_outbound
 

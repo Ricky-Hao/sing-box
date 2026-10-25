@@ -117,7 +117,10 @@ func NewInbound(ctx context.Context, router adapter.Router, logger log.ContextLo
 	return i, nil
 }
 
-func (i *Inbound) Start(stage adapter.StartStage) error {
+func (i *Inbound) Start(stage adapter.StartStage, scope *adapter.Scope) error {
+	if stage == adapter.StartStateInitialize {
+		scope.Add(i.Close)
+	}
 	if stage != adapter.StartStateStart {
 		return nil
 	}
@@ -180,7 +183,11 @@ func (i *Inbound) JudgeFlow(network uint8, source netip.AddrPort, destination ne
 	case adapter.PreMatchDrop:
 		return tun.FlowVerdict{Action: tun.ActionDrop}
 	case adapter.PreMatchBypass:
-		return tun.FlowVerdict{Action: tun.ActionBypass}
+		port, isPort := result.Outbound.(tun.Port)
+		if !isPort {
+			return tun.FlowVerdict{Action: tun.ActionBypass}
+		}
+		return tun.FlowVerdict{Action: tun.ActionBypass, Port: port, UDPTimeout: result.UDPTimeout, NewTracker: result.NewTracker}
 	case adapter.PreMatchHijackDNS:
 		return tun.FlowVerdict{Action: tun.ActionHijackDNS}
 	default:

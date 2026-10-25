@@ -2,13 +2,10 @@ package libbox
 
 import (
 	"context"
-	"errors"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
-	"syscall"
-	"time"
 
 	"github.com/sagernet/sing-box/adapter"
 	C "github.com/sagernet/sing-box/constant"
@@ -36,9 +33,9 @@ type CommandServer struct {
 	platformInterface PlatformInterface
 	platformWrapper   *platformInterfaceWrapper
 	powerManager      *powerreport.Manager
+	oomRecorder       *oomkiller.Recorder
 	grpcServer        *grpc.Server
 	listener          net.Listener
-	endPauseTimer     *time.Timer
 }
 
 type CommandServerHandler interface {
@@ -57,7 +54,6 @@ func NewCommandServer(handler CommandServerHandler, platformInterface PlatformIn
 	service.MustRegister[*powerreport.Manager](ctx, powerManager)
 	platformWrapper := &platformInterfaceWrapper{
 		iif:          platformInterface,
-		useProcFS:    platformInterface.UseProcFS(),
 		powerManager: powerManager,
 	}
 	service.MustRegister[adapter.PlatformInterface](ctx, platformWrapper)
@@ -83,12 +79,14 @@ func NewCommandServer(handler CommandServerHandler, platformInterface PlatformIn
 		// GroupID:          sGroupID,
 		// SystemProxyEnabled: false,
 	})
-	reporter := &oomReporter{startedService: server.StartedService}
-	service.MustRegister[oomkiller.OOMReporter](ctx, reporter)
+	oomRecorder := oomkiller.NewRecorder(OOMRecorderOptions(server.StartedService))
+	service.MustRegister[*oomkiller.Recorder](ctx, oomRecorder)
+	oomRecorder.Start()
+	server.oomRecorder = oomRecorder
 	server.managedService = daemon.NewManagedService(daemon.ManagedServiceOptions{
 		Handler:     (*platformHandler)(server),
 		Debug:       sDebug,
-		OOMReporter: reporter,
+		OOMRecorder: oomRecorder,
 	})
 	if sPowerReportEnabled {
 		err := powerManager.Start(PowerReportOptions(server.StartedService))
@@ -143,19 +141,10 @@ func (s *CommandServer) Start() error {
 	if sCommandServerListenPort == 0 {
 		sockPath := filepath.Join(sBasePath, "command.sock")
 		os.Remove(sockPath)
-		for range 30 {
-			listener, err = net.ListenUnix("unix", &net.UnixAddr{
-				Name: sockPath,
-				Net:  "unix",
-			})
-			if err == nil {
-				break
-			}
-			if !errors.Is(err, syscall.EROFS) {
-				break
-			}
-			time.Sleep(time.Second)
-		}
+		listener, err = net.ListenUnix("unix", &net.UnixAddr{
+			Name: sockPath,
+			Net:  "unix",
+		})
 		if err != nil {
 			return E.Cause(err, "listen command server")
 		}
@@ -195,6 +184,7 @@ func (s *CommandServer) Close() {
 	}
 	common.Close(s.listener)
 	s.StartedService.Close()
+	s.oomRecorder.Close()
 	s.powerManager.Close()
 }
 
@@ -248,36 +238,51 @@ func (s *CommandServer) NeedFindProcess() bool {
 	return instance.Box().Router().NeedFindProcess()
 }
 
+// iOS wakes the extension for every push and background task, so wake is ignored there and
+// the pause ends on the screen state instead.
 func (s *CommandServer) Pause() {
 	recorder := s.powerManager.Recorder()
 	if recorder != nil {
-		recorder.RecordPlatformEvent("ne-sleep")
+		recorder.RecordDeviceSleep()
 	}
-	instance := s.StartedService.Instance()
-	if instance == nil || instance.PauseManager() == nil {
+	if !(C.IsAndroid || C.IsIos) || C.IsTvOS {
 		return
 	}
-	instance.PauseManager().DevicePause()
-	if C.IsIos {
-		if s.endPauseTimer == nil {
-			s.endPauseTimer = time.AfterFunc(time.Minute, instance.PauseManager().DeviceWake)
-		} else {
-			s.endPauseTimer.Reset(time.Minute)
-		}
+	instance := s.StartedService.Instance()
+	if instance == nil || instance.Box() == nil || instance.PauseManager() == nil {
+		return
 	}
+	instance.Box().CloseIdleConnections()
+	instance.PauseManager().DevicePause()
 }
 
 func (s *CommandServer) Wake() {
 	recorder := s.powerManager.Recorder()
 	if recorder != nil {
-		recorder.RecordPlatformEvent("ne-wake")
+		recorder.RecordDeviceWake()
+	}
+	if !C.IsAndroid {
+		return
 	}
 	instance := s.StartedService.Instance()
 	if instance == nil || instance.PauseManager() == nil {
 		return
 	}
-	if !C.IsIos {
-		instance.PauseManager().DeviceWake()
+	instance.PauseManager().DeviceWake()
+}
+
+func (s *CommandServer) WakeNow() {
+	instance := s.StartedService.Instance()
+	if instance == nil || instance.PauseManager() == nil {
+		return
+	}
+	instance.PauseManager().DeviceWake()
+}
+
+func (s *CommandServer) RecordScreenState(on bool) {
+	recorder := s.powerManager.Recorder()
+	if recorder != nil {
+		recorder.RecordScreenState(on)
 	}
 }
 

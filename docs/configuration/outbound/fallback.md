@@ -46,6 +46,8 @@ This prevents one slow URL test from occupying the whole interval and blocking t
 
 To reduce flapping on weak or switching networks without increasing failover time, scheduled background checks mark a failed outbound unavailable immediately, but require two consecutive successful background probes before failing back to a higher-priority recovered outbound. Forced checks and real connection failures still update availability immediately.
 
+A failed real connection is not retried. If a healthy backup exists, selection changes immediately for subsequent requests, including connections routed through nested selectors. Nested groups resolve their current selection separately for TCP and UDP.
+
 #### idle_timeout
 
 The idle timeout. `30m` will be used if empty.
