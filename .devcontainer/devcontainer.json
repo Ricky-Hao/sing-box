@@ -1,0 +1,20 @@
+{
+  "name": "sing-box",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "workspaceFolder": "/workspaces/sing-box",
+  "remoteUser": "vscode",
+  "containerUser": "vscode",
+  "updateRemoteUserUID": false,
+  "customizations": {
+    "vscode": {
+      "extensions": ["golang.go"],
+      "settings": {
+        "files.eol": "\n",
+        "go.useLanguageServer": true
+      }
+    }
+  }
+}
