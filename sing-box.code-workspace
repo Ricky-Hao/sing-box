@@ -1,0 +1,12 @@
+{
+  "folders": [
+    { "name": "patchset", "path": "." },
+    { "name": "sing-box application", "path": ".work/application" }
+  ],
+  "settings": {
+    "files.eol": "\n",
+    "terminal.integrated.cwd": "${workspaceFolder:sing-box application}",
+    "go.testTags": "with_iwan,with_gvisor",
+    "gopls": { "build.buildFlags": ["-tags=with_iwan,with_gvisor"] }
+  }
+}

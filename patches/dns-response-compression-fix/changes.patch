@@ -1,0 +1,432 @@
+diff --git a/dns/client_truncate.go b/dns/client_truncate.go
+index 90b144a4a994f3ee26d77c13d997fcb8dc898eb1..09ff0cd297c696f458767a023484bc76da6b3d20 100644
+--- a/dns/client_truncate.go
++++ b/dns/client_truncate.go
+@@ -6,6 +6,32 @@ import (
+ 	"github.com/miekg/dns"
+ )
+ 
++func compressedMessage(message *dns.Msg) dns.Msg {
++	compressed := *message
++	compressed.Compress = true
++	return compressed
++}
++
++// CompressedMessageLen returns the DNS wire length with name compression enabled.
++func CompressedMessageLen(message *dns.Msg) int {
++	compressed := compressedMessage(message)
++	return compressed.Len()
++}
++
++// UncompressedMessageLen returns the DNS wire length with name compression disabled.
++func UncompressedMessageLen(message *dns.Msg) int {
++	uncompressed := *message
++	uncompressed.Compress = false
++	return uncompressed.Len()
++}
++
++// PackCompressedMessage packs message with DNS name compression enabled.
++func PackCompressedMessage(message *dns.Msg, buffer []byte) ([]byte, error) {
++	compressed := copyDNSMessage(message)
++	compressed.Compress = true
++	return compressed.PackBuffer(buffer)
++}
++
+ func TruncateDNSMessage(request *dns.Msg, response *dns.Msg, frontHeadroom int, rearHeadroom int) (*buf.Buffer, error) {
+ 	maxLen := 512
+ 	if edns0Option := request.IsEdns0(); edns0Option != nil {
+@@ -13,16 +39,16 @@ func TruncateDNSMessage(request *dns.Msg, response *dns.Msg, frontHeadroom int,
+ 			maxLen = udpSize
+ 		}
+ 	}
+-	responseLen := response.Len()
+-	compressedResponse := *response
+-	compressedResponse.Compress = true
+-	if compressedResponse.Len() > maxLen {
+-		compressedResponse = *response.Copy()
+-		compressedResponse.Truncate(maxLen)
++	compressedResponseLen := CompressedMessageLen(response)
++	packedResponse := copyDNSMessage(response)
++	packedResponse.Compress = true
++	if compressedResponseLen > maxLen {
++		packedResponse.Truncate(maxLen)
++		packedResponse.Compress = true
+ 	}
+-	buffer := buf.NewSize(frontHeadroom + responseLen + 1 + rearHeadroom)
++	buffer := buf.NewSize(frontHeadroom + UncompressedMessageLen(packedResponse) + 1 + rearHeadroom)
+ 	buffer.Resize(frontHeadroom, 0)
+-	rawMessage, err := compressedResponse.PackBuffer(buffer.FreeBytes())
++	rawMessage, err := packedResponse.PackBuffer(buffer.FreeBytes())
+ 	if err != nil {
+ 		buffer.Release()
+ 		return nil, err
+@@ -30,3 +56,26 @@ func TruncateDNSMessage(request *dns.Msg, response *dns.Msg, frontHeadroom int,
+ 	buffer.Truncate(len(rawMessage))
+ 	return buffer, nil
+ }
++
++func copyDNSMessage(message *dns.Msg) *dns.Msg {
++	// PackBuffer updates EDNS records, so copy records shared by cached responses.
++	copied := *message
++	copied.Question = append([]dns.Question(nil), message.Question...)
++	copied.Answer = copyDNSRecords(message.Answer)
++	copied.Ns = copyDNSRecords(message.Ns)
++	copied.Extra = copyDNSRecords(message.Extra)
++	return &copied
++}
++
++func copyDNSRecords(records []dns.RR) []dns.RR {
++	if records == nil {
++		return nil
++	}
++	copied := make([]dns.RR, len(records))
++	for index, record := range records {
++		if record != nil {
++			copied[index] = dns.Copy(record)
++		}
++	}
++	return copied
++}
+diff --git a/dns/client_truncate_test.go b/dns/client_truncate_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..80ee3e6d74ad640c36bd238901de6c5bd91902ab
+--- /dev/null
++++ b/dns/client_truncate_test.go
+@@ -0,0 +1,245 @@
++package dns
++
++import (
++	"bytes"
++	"net"
++	"testing"
++
++	mDNS "github.com/miekg/dns"
++)
++
++func TestTruncateDNSMessageCompressesBeforeTruncating(t *testing.T) {
++	question := mDNS.Question{
++		Name:   "very-long-iot-device-service-name.example.internal.",
++		Qtype:  mDNS.TypeA,
++		Qclass: mDNS.ClassINET,
++	}
++	request := &mDNS.Msg{
++		MsgHdr: mDNS.MsgHdr{
++			Id:               1,
++			RecursionDesired: true,
++		},
++		Question: []mDNS.Question{question},
++	}
++	response := &mDNS.Msg{
++		MsgHdr: mDNS.MsgHdr{
++			Id:                 request.Id,
++			Response:           true,
++			Authoritative:      true,
++			RecursionAvailable: true,
++		},
++		Question: []mDNS.Question{question},
++	}
++	for index := 0; response.Len() <= 512; index++ {
++		if index >= 20 {
++			t.Fatal("failed to construct a response that exceeds 512 bytes without compression")
++		}
++		response.Answer = append(response.Answer, &mDNS.A{
++			Hdr: mDNS.RR_Header{
++				Name:   question.Name,
++				Rrtype: mDNS.TypeA,
++				Class:  mDNS.ClassINET,
++				Ttl:    60,
++			},
++			A: net.IPv4(192, 0, 2, byte(index+1)),
++		})
++	}
++
++	if response.Len() <= 512 {
++		t.Fatal("test response must exceed the default UDP DNS limit without compression")
++	}
++	compressed := *response
++	compressed.Compress = true
++	if compressed.Len() > 512 {
++		t.Fatal("test response must fit the default UDP DNS limit with compression")
++	}
++
++	buffer, err := TruncateDNSMessage(request, response, 0, 0)
++	if err != nil {
++		t.Fatal(err)
++	}
++	defer buffer.Release()
++
++	if buffer.Len() > 512 {
++		t.Fatalf("compressed response length = %d, want <= 512", buffer.Len())
++	}
++	var unpacked mDNS.Msg
++	if err = unpacked.Unpack(buffer.Bytes()); err != nil {
++		t.Fatal(err)
++	}
++	if unpacked.Truncated {
++		t.Fatal("response was truncated even though the compressed response fits")
++	}
++	if len(unpacked.Answer) != len(response.Answer) {
++		t.Fatalf("answer count = %d, want %d", len(unpacked.Answer), len(response.Answer))
++	}
++	if response.Compress {
++		t.Fatal("TruncateDNSMessage must not mutate the caller-owned response")
++	}
++}
++
++func TestTruncateDNSMessageCompressedLimitBoundaries(t *testing.T) {
++	tests := []struct {
++		name          string
++		responseLen   int
++		wantTruncated bool
++	}{
++		{"below limit", 511, false},
++		{"equal to limit", 512, false},
++		{"above limit", 513, true},
++	}
++	for _, test := range tests {
++		t.Run(test.name, func(t *testing.T) {
++			request, response := responseWithCompressedLength(t, test.responseLen)
++			original := response.String()
++			originalCompress := response.Compress
++
++			buffer, err := TruncateDNSMessage(request, response, 7, 11)
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer buffer.Release()
++
++			if buffer.Start() != 7 {
++				t.Fatalf("front headroom = %d, want 7", buffer.Start())
++			}
++			if buffer.FreeLen() < 12 {
++				t.Fatalf("remaining rear headroom = %d, want at least 12", buffer.FreeLen())
++			}
++			if buffer.Len() > 512 {
++				t.Fatalf("response length = %d, want <= 512", buffer.Len())
++			}
++			var unpacked mDNS.Msg
++			if err = unpacked.Unpack(buffer.Bytes()); err != nil {
++				t.Fatal(err)
++			}
++			if unpacked.Truncated != test.wantTruncated {
++				t.Fatalf("truncated = %v, want %v", unpacked.Truncated, test.wantTruncated)
++			}
++			if !test.wantTruncated && buffer.Len() != test.responseLen {
++				t.Fatalf("response length = %d, want %d", buffer.Len(), test.responseLen)
++			}
++			repeatedBuffer, err := TruncateDNSMessage(request, response, 7, 11)
++			if err != nil {
++				t.Fatal(err)
++			}
++			defer repeatedBuffer.Release()
++			if !bytes.Equal(repeatedBuffer.Bytes(), buffer.Bytes()) {
++				t.Fatal("repeated call returned different wire response")
++			}
++			if response.String() != original || response.Compress != originalCompress {
++				t.Fatal("TruncateDNSMessage mutated the caller-owned response")
++			}
++		})
++	}
++}
++
++func TestTruncateDNSMessageDoesNotMutateEDNSRecord(t *testing.T) {
++	request := newTestRequest()
++	response := newTestResponse(request.Question[0])
++	response.SetEdns0(4096, false)
++	response.IsEdns0().SetExtendedRcode(16)
++	original := response.String()
++	originalExtendedRcode := response.IsEdns0().ExtendedRcode()
++
++	buffer, err := TruncateDNSMessage(request, response, 0, 0)
++	if err != nil {
++		t.Fatal(err)
++	}
++	buffer.Release()
++
++	if response.String() != original || response.IsEdns0().ExtendedRcode() != originalExtendedRcode {
++		t.Fatal("TruncateDNSMessage mutated the caller-owned EDNS record")
++	}
++}
++
++func TestTruncateDNSMessageReturnsPackErrorForMalformedResponse(t *testing.T) {
++	request := newTestRequest()
++	response := newTestResponse(request.Question[0])
++	response.Answer = []mDNS.RR{nil}
++
++	buffer, err := TruncateDNSMessage(request, response, 0, 0)
++
++	if err == nil {
++		if buffer != nil {
++			buffer.Release()
++		}
++		t.Fatal("expected malformed response packing to fail")
++	}
++	if buffer != nil {
++		buffer.Release()
++		t.Fatal("buffer must be nil when packing fails")
++	}
++	if response.Compress || len(response.Answer) != 1 || response.Answer[0] != nil {
++		t.Fatal("TruncateDNSMessage mutated the malformed caller-owned response")
++	}
++}
++
++func responseWithCompressedLength(t *testing.T, target int) (*mDNS.Msg, *mDNS.Msg) {
++	t.Helper()
++	request := newTestRequest()
++	response := newTestResponse(request.Question[0])
++	for index := range 8 {
++		response.Answer = append(response.Answer, &mDNS.A{
++			Hdr: mDNS.RR_Header{
++				Name:   request.Question[0].Name,
++				Rrtype: mDNS.TypeA,
++				Class:  mDNS.ClassINET,
++				Ttl:    60,
++			},
++			A: net.IPv4(192, 0, 2, byte(index+1)),
++		})
++	}
++	for payloadLen := 0; payloadLen <= 512; payloadLen++ {
++		candidate := response.Copy()
++		candidate.Answer = append(candidate.Answer, &mDNS.TXT{
++			Hdr: mDNS.RR_Header{
++				Name:   request.Question[0].Name,
++				Rrtype: mDNS.TypeTXT,
++				Class:  mDNS.ClassINET,
++				Ttl:    60,
++			},
++			Txt: splitTXT(bytes.Repeat([]byte{'x'}, payloadLen)),
++		})
++		if CompressedMessageLen(candidate) == target {
++			if UncompressedMessageLen(candidate) <= 512 {
++				t.Fatal("test response must exceed 512 bytes without compression")
++			}
++			return request, candidate
++		}
++	}
++	t.Fatalf("failed to construct response with compressed length %d", target)
++	return nil, nil
++}
++
++func splitTXT(payload []byte) []string {
++	var values []string
++	for len(payload) > 255 {
++		values = append(values, string(payload[:255]))
++		payload = payload[255:]
++	}
++	return append(values, string(payload))
++}
++
++func newTestRequest() *mDNS.Msg {
++	return &mDNS.Msg{
++		MsgHdr: mDNS.MsgHdr{Id: 1, RecursionDesired: true},
++		Question: []mDNS.Question{{
++			Name:   "very-long-iot-device-service-name.example.internal.",
++			Qtype:  mDNS.TypeA,
++			Qclass: mDNS.ClassINET,
++		}},
++	}
++}
++
++func newTestResponse(question mDNS.Question) *mDNS.Msg {
++	return &mDNS.Msg{
++		MsgHdr: mDNS.MsgHdr{
++			Id:                 1,
++			Response:           true,
++			Authoritative:      true,
++			RecursionAvailable: true,
++		},
++		Question: []mDNS.Question{question},
++	}
++}
+diff --git a/protocol/dns/handle.go b/protocol/dns/handle.go
+index 79e3321a8a43f2224baa34d43842942427ddc549..0bcde25b04ec3ad44d38e8053eacccb06a494e79 100644
+--- a/protocol/dns/handle.go
++++ b/protocol/dns/handle.go
+@@ -51,13 +51,11 @@ func HandleStreamDNSRequest(ctx context.Context, router adapter.DNSRouter, conn
+ }
+ 
+ func writeStreamResponse(conn net.Conn, response *mDNS.Msg) {
+-	responseLength := response.Len()
++	responseLength := dns.UncompressedMessageLen(response)
+ 	responseBuffer := buf.NewSize(3 + responseLength)
+ 	defer responseBuffer.Release()
+ 	responseBuffer.Resize(2, 0)
+-	compressedResponse := *response
+-	compressedResponse.Compress = true
+-	n, err := compressedResponse.PackBuffer(responseBuffer.FreeBytes())
++	n, err := dns.PackCompressedMessage(response, responseBuffer.FreeBytes())
+ 	if err != nil {
+ 		return
+ 	}
+diff --git a/protocol/dns/handle_test.go b/protocol/dns/handle_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..b2512869df9b3e5de1e87e07c6861c2ebf25b5dd
+--- /dev/null
++++ b/protocol/dns/handle_test.go
+@@ -0,0 +1,66 @@
++package dns
++
++import (
++	"encoding/binary"
++	"io"
++	"net"
++	"testing"
++	"time"
++
++	boxDNS "github.com/sagernet/sing-box/dns"
++
++	mDNS "github.com/miekg/dns"
++)
++
++func TestWriteStreamResponsePacksCompressedParseableMessage(t *testing.T) {
++	response := &mDNS.Msg{
++		MsgHdr:   mDNS.MsgHdr{Id: 1, Response: true},
++		Question: []mDNS.Question{{Name: "repeated-name.example.", Qtype: mDNS.TypeA, Qclass: mDNS.ClassINET}},
++	}
++	for index := range 8 {
++		response.Answer = append(response.Answer, &mDNS.A{
++			Hdr: mDNS.RR_Header{Name: response.Question[0].Name, Rrtype: mDNS.TypeA, Class: mDNS.ClassINET},
++			A:   net.IPv4(192, 0, 2, byte(index+1)),
++		})
++	}
++	original := response.String()
++	originalCompress := response.Compress
++	serverConn, clientConn := net.Pipe()
++	defer serverConn.Close()
++	defer clientConn.Close()
++	if err := clientConn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
++		t.Fatal(err)
++	}
++	done := make(chan struct{})
++	go func() {
++		writeStreamResponse(serverConn, response)
++		close(done)
++	}()
++
++	var responseLength uint16
++	if err := binary.Read(clientConn, binary.BigEndian, &responseLength); err != nil {
++		t.Fatal(err)
++	}
++	wireResponse := make([]byte, responseLength)
++	if _, err := io.ReadFull(clientConn, wireResponse); err != nil {
++		t.Fatal(err)
++	}
++	<-done
++
++	if int(responseLength) != boxDNS.CompressedMessageLen(response) {
++		t.Fatalf("response length = %d, want compressed length %d", responseLength, boxDNS.CompressedMessageLen(response))
++	}
++	if int(responseLength) >= boxDNS.UncompressedMessageLen(response) {
++		t.Fatal("stream response was not compressed")
++	}
++	var unpacked mDNS.Msg
++	if err := unpacked.Unpack(wireResponse); err != nil {
++		t.Fatal(err)
++	}
++	if len(unpacked.Answer) != len(response.Answer) {
++		t.Fatalf("answer count = %d, want %d", len(unpacked.Answer), len(response.Answer))
++	}
++	if response.String() != original || response.Compress != originalCompress {
++		t.Fatal("writeStreamResponse mutated the caller-owned response")
++	}
++}

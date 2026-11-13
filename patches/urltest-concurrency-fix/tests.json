@@ -1,0 +1,6 @@
+{
+  "checks": [
+    {"name": "URLTest selection race regressions", "tier": "focused", "cwd": ".", "requires": ["protocol/group/urltest_race_test.go", "protocol/group/fallback_race_test.go", "protocol/group/fallback_test.go"], "command": ["go", "test", "-race", "-count=1", "-run", "^TestURLTestSelection", "./protocol/group"]},
+    {"name": "group package regressions", "tier": "project", "cwd": ".", "requires": ["protocol/group/urltest_race_test.go"], "command": ["go", "test", "-count=1", "./protocol/group"]}
+  ]
+}

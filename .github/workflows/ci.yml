@@ -1,0 +1,222 @@
+name: Patchset CI
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: patchset-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: false
+
+env:
+  MAINTENANCE_SHA: ${{ github.sha }}
+  GOWORK: 'off'
+  GOFLAGS: -timeout=10m
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      maintenance: ${{ steps.source.outputs.maintenance }}
+      base: ${{ steps.source.outputs.base }}
+      branch: ${{ steps.source.outputs.branch }}
+      commit: ${{ steps.source.outputs.commit }}
+      tree: ${{ steps.source.outputs.tree }}
+      version: ${{ steps.source.outputs.version }}
+      tag: ${{ steps.source.outputs.tag }}
+      release: ${{ steps.source.outputs.release == 'true' && steps.merge.outputs.merged == 'true' }}
+      groups: ${{ steps.source.outputs.groups }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ env.MAINTENANCE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Maintenance tool regressions
+        run: python3 -m unittest discover -s tools -p 'test_*.py' -v
+      - name: Rebuild exact source
+        id: source
+        env:
+          PREVIOUS_SHA: ${{ github.event_name == 'push' && github.event.before || github.event.pull_request.base.sha }}
+        run: |
+          if [ "$PREVIOUS_SHA" = 0000000000000000000000000000000000000000 ]; then
+            PREVIOUS_SHA=HEAD^1
+          fi
+          python3 tools/ci.py --maintenance "$MAINTENANCE_SHA" --previous "$PREVIOUS_SHA"
+      - name: Require a merged main PR for publishing
+        id: merge
+        if: github.event_name == 'push' && steps.source.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          merged_shas=$(gh api --paginate "repos/$GH_REPO/commits/$MAINTENANCE_SHA/pulls?per_page=100" \
+            --jq '.[] | select(.merged_at != null and .base.ref == "main") | .merge_commit_sha')
+          if grep -Fx "$MAINTENANCE_SHA" <<< "$merged_shas" > /dev/null; then
+            echo 'merged=true' >> "$GITHUB_OUTPUT"
+          else
+            echo '::notice::No merged main PR for this exact commit; validation only.'
+          fi
+      - name: Maintenance and applied whitespace
+        run: |
+          git diff --check "$PREVIOUS_SHA" HEAD
+          git -C .work/application diff --check "$BASE" HEAD
+        # Compare against the first parent on the exact checked-out maintenance commit.
+        # PR preview commits also have the target branch as their first parent.
+        shell: bash
+        env:
+          BASE: ${{ steps.source.outputs.base }}
+          PREVIOUS_SHA: HEAD^1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.26.7
+          cache-dependency-path: .work/application/go.sum
+      - name: Workflow syntax
+        run: |
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          "$(go env GOPATH)/bin/actionlint" -config-file tools/actionlint.yaml .github/workflows/*.yml
+
+  focused:
+    needs: prepare
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.maintenance }}
+          persist-credentials: false
+      - name: Rebuild validated snapshot
+        env:
+          APPLICATION_COMMIT: ${{ needs.prepare.outputs.commit }}
+          APPLICATION_TREE: ${{ needs.prepare.outputs.tree }}
+        run: python3 tools/ci.py --maintenance "$MAINTENANCE_SHA" --expect-commit "$APPLICATION_COMMIT" --expect-tree "$APPLICATION_TREE"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.26.7
+          cache-dependency-path: .work/application/go.sum
+      - name: All feature contracts including race and build tags
+        run: python3 tools/patchset.py test --target .work/application --tier all
+
+  isolated:
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        feature: ${{ fromJSON(needs.prepare.outputs.groups) }}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.maintenance }}
+          persist-credentials: false
+      - name: Replay only this feature and its dependencies
+        env:
+          FEATURE: ${{ matrix.feature }}
+        run: python3 tools/patchset.py generate --target .work/isolated --only "$FEATURE"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.26.7
+          cache-dependency-path: .work/isolated/go.sum
+      - name: Run real dependency closure contracts
+        env:
+          FEATURE: ${{ matrix.feature }}
+        run: python3 tools/patchset.py test --target .work/isolated --only "$FEATURE" --tier all
+
+  test:
+    name: Test (${{ matrix.os }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.maintenance }}
+          persist-credentials: false
+      - name: Rebuild validated snapshot
+        env:
+          APPLICATION_COMMIT: ${{ needs.prepare.outputs.commit }}
+          APPLICATION_TREE: ${{ needs.prepare.outputs.tree }}
+        run: python3 tools/ci.py --maintenance "$MAINTENANCE_SHA" --expect-commit "$APPLICATION_COMMIT" --expect-tree "$APPLICATION_TREE"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.26.7
+          cache-dependency-path: .work/application/go.sum
+      - name: Set build tags and ldflags
+        working-directory: .work/application
+        run: |
+          echo "BUILD_TAGS=$(cat release/DEFAULT_BUILD_TAGS_OTHERS)" >> "$GITHUB_ENV"
+          echo "LDFLAGS_SHARED=$(cat release/LDFLAGS)" >> "$GITHUB_ENV"
+      - name: Test (unix)
+        if: matrix.os != 'windows-latest'
+        working-directory: .work/application
+        run: go test -v -exec sudo -tags "$BUILD_TAGS" -ldflags "$LDFLAGS_SHARED" ./...
+      - name: Test (windows)
+        if: matrix.os == 'windows-latest'
+        working-directory: .work/application
+        run: go test -v -tags "$BUILD_TAGS" -ldflags "$LDFLAGS_SHARED" ./...
+
+  lint:
+    name: Lint ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: prepare
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {goos: linux, goarch: amd64}
+          - {goos: linux, goarch: arm64}
+          - {goos: windows, goarch: amd64}
+          - {goos: windows, goarch: arm64}
+          - {goos: darwin, goarch: amd64}
+          - {goos: darwin, goarch: arm64}
+          - {goos: android, goarch: arm64}
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          ref: ${{ needs.prepare.outputs.maintenance }}
+          persist-credentials: false
+      - name: Rebuild validated snapshot
+        env:
+          APPLICATION_COMMIT: ${{ needs.prepare.outputs.commit }}
+          APPLICATION_TREE: ${{ needs.prepare.outputs.tree }}
+        run: python3 tools/ci.py --maintenance "$MAINTENANCE_SHA" --expect-commit "$APPLICATION_COMMIT" --expect-tree "$APPLICATION_TREE"
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: 1.26.7
+          cache-dependency-path: .work/application/go.sum
+      - uses: golangci/golangci-lint-action@v8
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        with:
+          version: latest
+          args: --timeout=30m
+          working-directory: .work/application
+          install-mode: binary
+          verify: false
+
+  release:
+    needs: [prepare, focused, isolated, test, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.prepare.outputs.release == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/build.yml
+    with:
+      maintenance: ${{ needs.prepare.outputs.maintenance }}
+      application-commit: ${{ needs.prepare.outputs.commit }}
+      application-tree: ${{ needs.prepare.outputs.tree }}
+      version: ${{ needs.prepare.outputs.version }}
+      tag: ${{ needs.prepare.outputs.tag }}
+    secrets: inherit

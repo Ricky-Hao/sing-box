@@ -1,0 +1,138 @@
+{
+  "format": 1,
+  "upstream": "https://github.com/SagerNet/sing-box.git",
+  "base": "c005f35300ce76427dc285481ec5695f5b179cd2",
+  "application": {
+    "ref": "refs/tags/v1.14.4",
+    "branch": "v1.14.4"
+  },
+  "patches": [
+    {
+      "id": "iwan",
+      "status": "keep",
+      "depends_on": [],
+      "patch": "patches/iwan/changes.patch",
+      "paths": [
+        ".golangci.yml",
+        "cmd/internal/build_libbox/main.go",
+        "cmd/internal/build_libbox/main_test.go",
+        "constant/proxy.go",
+        "docs/configuration/endpoint/index.md",
+        "docs/configuration/endpoint/index.zh.md",
+        "docs/configuration/endpoint/iwan.md",
+        "docs/configuration/endpoint/iwan.zh.md",
+        "docs/configuration/inbound/index.md",
+        "docs/configuration/inbound/index.zh.md",
+        "docs/configuration/inbound/iwan.md",
+        "docs/configuration/inbound/iwan.zh.md",
+        "docs/installation/build-from-source.md",
+        "docs/installation/build-from-source.zh.md",
+        "docs/schema.json",
+        "include/iwan.go",
+        "include/iwan_stub.go",
+        "include/registry.go",
+        "mkdocs.yml",
+        "option/iwan.go",
+        "option/iwan_test.go",
+        "protocol/iwan/endpoint.go",
+        "protocol/iwan/endpoint_test.go",
+        "protocol/iwan/inbound.go",
+        "protocol/iwan/inbound_test.go",
+        "protocol/iwan/stub.go",
+        "release/DEFAULT_BUILD_TAGS",
+        "release/DEFAULT_BUILD_TAGS_OTHERS",
+        "release/DEFAULT_BUILD_TAGS_WINDOWS",
+        "transport/iwan/batch_linux_test.go",
+        "transport/iwan/device_stack.go",
+        "transport/iwan/device_stack_gonet.go",
+        "transport/iwan/device_stack_stub.go",
+        "transport/iwan/device_stack_test.go",
+        "transport/iwan/endpoint.go",
+        "transport/iwan/endpoint_options.go",
+        "transport/iwan/endpoint_test.go",
+        "transport/iwan/fragment.go",
+        "transport/iwan/fragment_test.go",
+        "transport/iwan/protocol.go",
+        "transport/iwan/protocol_test.go",
+        "transport/iwan/protocol_username_test.go",
+        "transport/iwan/server.go",
+        "transport/iwan/server_test.go",
+        "transport/iwan/socket_buffer.go",
+        "transport/iwan/tcp_forwarder.go",
+        "transport/iwan/username_options_test.go",
+        "transport/iwan/write_vector_linux.go",
+        "transport/iwan/write_vector_stub.go"
+      ],
+      "tests": "patches/iwan/tests.json"
+    },
+    {
+      "id": "tcp-urltest",
+      "status": "keep",
+      "depends_on": [],
+      "patch": "patches/tcp-urltest/changes.patch",
+      "paths": [
+        "common/urltest/urltest.go",
+        "common/urltest/urltest_test.go",
+        "docs/configuration/outbound/urltest.md",
+        "docs/configuration/outbound/urltest.zh.md"
+      ],
+      "tests": "patches/tcp-urltest/tests.json"
+    },
+    {
+      "id": "urltest-concurrency-fix",
+      "status": "keep",
+      "depends_on": [],
+      "patch": "patches/urltest-concurrency-fix/changes.patch",
+      "paths": [
+        "protocol/group/fallback_race_test.go",
+        "protocol/group/fallback_test.go",
+        "protocol/group/urltest.go",
+        "protocol/group/urltest_race_test.go"
+      ],
+      "tests": "patches/urltest-concurrency-fix/tests.json"
+    },
+    {
+      "id": "fallback",
+      "status": "keep",
+      "depends_on": [
+        "tcp-urltest",
+        "urltest-concurrency-fix"
+      ],
+      "patch": "patches/fallback/changes.patch",
+      "paths": [
+        "adapter/outbound.go",
+        "constant/proxy.go",
+        "daemon/started_service.go",
+        "docs/clients/general.md",
+        "docs/configuration/outbound/fallback.md",
+        "docs/configuration/outbound/fallback.zh.md",
+        "docs/configuration/outbound/index.md",
+        "docs/configuration/outbound/index.zh.md",
+        "docs/schema.json",
+        "include/registry.go",
+        "mkdocs.yml",
+        "option/group.go",
+        "protocol/group/fallback.go",
+        "protocol/group/fallback_race_test.go",
+        "protocol/group/fallback_test.go",
+        "protocol/group/urltest.go",
+        "route/conn.go",
+        "route/fallback_test.go"
+      ],
+      "tests": "patches/fallback/tests.json"
+    },
+    {
+      "id": "dns-response-compression-fix",
+      "status": "keep",
+      "depends_on": [],
+      "patch": "patches/dns-response-compression-fix/changes.patch",
+      "paths": [
+        "dns/client_truncate.go",
+        "dns/client_truncate_test.go",
+        "protocol/dns/handle.go",
+        "protocol/dns/handle_test.go"
+      ],
+      "tests": "patches/dns-response-compression-fix/tests.json"
+    }
+  ]
+}

@@ -1,31 +1,15 @@
-# sing-box 开发环境
+# 补丁仓开发环境
 
-本目录用于本地 Dev Containers 和 Coder 的核心 Go 开发。维护分支为 `rickyhao/stable`，工作目录为 `/workspaces/sing-box`。
-
-## 工具与归属
-
-- 基础镜像固定为 Go `1.26.7` 的 Bookworm 镜像及其 digest，与当前 fork CI 工具链一致。升级时核对 `go.mod` 和相关 workflow。
-- 容器使用 `vscode` 用户，UID/GID 为 `1000`。`sudo` 用于安装必要依赖和项目已有的特权测试，不代表可以操作外部设备。
-- 镜像包含 C/C++ 编译工具、Git、SSH 客户端、Python 和常用查询工具。
-- Coder 模板负责 OpenCode、acpx、opencode-task 及其认证环境。本目录不重复安装这些工具。
-- Git 使用 Coder 已有 SSH 身份和主机信任。不要把私钥、Token 或签名材料写入镜像、仓库或日志。
-- 本目录不新增缓存卷或清理旧数据。Coder 的 Workspace 和工具持久化由模板管理。
-
-## 核心检查
-
-在仓库根目录运行以下检查。具体改动仍须遵守根目录 `AGENTS.md`。
+沿用 Go 1.26.7 Bookworm 固定镜像、Python、Git 和 C 编译工具。没有安装 coding agent，也不修改现有 Coder runtime。此配置给新建 Dev Container 使用；已有工作区直接运行下列命令即可。
 
 ```sh
-go version
-go test -tags with_iwan,with_gvisor ./transport/iwan ./protocol/iwan ./option
-go test -tags with_iwan,with_gvisor ./include
-go test -run '^$' ./cmd/internal/build_libbox
-go build -tags with_iwan,with_gvisor -o /tmp/sing-box-dev ./cmd/sing-box
-git diff --check
+bash tools/prepare.sh
+# 离线重用已有准确源码：bash tools/prepare.sh --source /path/to/sing-box
+python3 tools/patchset.py test --target .work/application --tier all
 ```
 
-首次测试会下载 Go 依赖。该镜像没有预装 Android SDK/NDK、JDK 或 Apple 工具链，不代表已经验证 APK、Apple 客户端或完整发布矩阵。需要对应构建时，使用项目已有 CI，或为当前任务单独准备所需工具。
+postCreateCommand 在固定官方 ref 上生成 `.work/application` linked worktree，再在生成目录下载 Go 依赖。目标有修改或同名版本内容不同会停止，保留原文件；按 MAINTENANCE.md 移动旧 worktree 并选择新快照名，不重置工作树。
 
-## 运行边界
+VS Code 可打开根目录的 `sing-box.code-workspace`，同时看到维护文件与应用源码。Go 构建、gopls、gofmt、原有 Makefile 命令和测试在 `.work/application` 执行，维护 Python 检查在根目录执行。维护仓没有 go.mod，不能在根目录执行 `go test ./...`。应用修改使用编辑分支，必须回写所属 patch；不要直接改已生成版本快照。
 
-容器不会自动启动 sing-box，也不请求 TUN、主机网络或额外容器权限。默认只做源码开发和离线测试。真实网络测试、发布和设备部署需要各自的授权；不要把本地构建成功当作设备业务健康。
+容器不挂载 TUN、不配置真实网络设备，也不导入 APK 签名或网络凭据。Android 签名构建仍使用维护 CI 的稳定 secret 和固定 SDK/NDK/JDK 步骤。

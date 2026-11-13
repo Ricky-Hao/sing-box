@@ -1,66 +1,30 @@
-# Agent instructions for this fork
+# 补丁仓工作规则
 
-This repository is a Ricky-Hao fork of `sing-box`. Keep the fork easy to rebase onto upstream `stable`: make small, intentional changes, keep upstream behavior as the default, and do not rewrite unrelated files.
+先读 `README.md`、`MAINTENANCE.md`、`manifest.json` 和涉及组的 README/tests.json。`main` 是维护层，不保存完整上游源码或 go.mod。完整应用在 `.work/application` 等生成目录；旧 `rickyhao/stable`、其他分支和 worktree 必须保留。不要把应用提交或上游 merge 直接写进维护层。
 
-## Fork maintenance rules
+## 功能分组与实现
 
-- Treat `rickyhao/stable` as the maintained fork branch based on upstream `stable`.
-- Prefer upstream files and behavior unless a fork-specific requirement explicitly says otherwise.
-- When changing GitHub Actions or release logic, reuse upstream workflow structure. Disable workflows that are not needed, but for workflows that remain enabled, only reduce outputs; roll unrelated workflow changes back to upstream.
-- Keep each functional area squashable into one clear commit. Do not broad-format, reorder, or refactor unrelated code just to make a change look cleaner.
-- Do not commit, tag, push, publish releases, or rewrite branch history unless explicitly asked.
+- 一组交付完整能力或可独立应用、验证、淘汰的修复。必要调用方、状态和副作用、构建接线、原有测试、配置/使用文档、schema 与功能同组。
+- 将历史修正合入当前功能组。不能按文件数、跨层、历史提交数或单纯降低 patch 大小拆组。
+- 共享文件按 hunk 分配单一责任，不能整文件覆盖混入其他组。按准确前序 tree 导出；依赖只写真实调用、数据或测试要求，并通过依赖闭包重放核实。
+- 应用开发使用编辑分支；所有源码变更必须回写 patch。保留上游默认行为，不顺带重构或重写原有业务测试。
+- 主动放弃能力按 [MAINTENANCE.md 的流程](MAINTENANCE.md#主动放弃功能)处理：先核消费者、配置/数据与真实依赖，在当前授权内明确行为变化，再移出活动 manifest；无替代时不得伪造上游替代状态。
+- CI、发布矩阵、SFA 签名/依赖、Devcontainer、工具链和工程指引属于维护层，不另做业务 patch。应用指引模板是 `tools/application-AGENTS.md`。
 
-## iWAN endpoint rules
+## 生成与验证
 
-- The iWAN endpoint is a fork feature and must be built with both `with_iwan` and `with_gvisor`.
-- Keep `with_iwan` and `with_gvisor` wired in every relevant build surface:
-  - CLI release tag files under `release/`.
-  - Mobile/libbox tags in `cmd/internal/build_libbox/main.go`.
-  - Include/stub registration under `include/`.
-- iWAN is userspace-stack only for now. `system: true` must remain unsupported until a real system TUN implementation is intentionally designed.
-- Preserve these documented semantics:
-  - `address` is optional; the effective tunnel IPv4 address comes from OPENACK.
-  - `allowed_ips` only provides route preference for `preferred_by`; it does not install OS routes.
-  - Segment routing, OS route management, `up_script`/`down_script`, and applying OPENACK DNS to the system resolver are out of scope unless explicitly requested.
-- Keep protocol behavior compatible with `iwand`: OPEN/OPENACK/OPENREJ/DATA/DATA_ENC/ECHO/CLOSE, IPFRAG reassembly, MD5 control signatures, AES-128 password TLV block, XOR data encryption, token/session handling, and TLV length semantics.
-- Do not silently accept data from arbitrary UDP sources. Prefer connected UDP or explicit source validation.
-- Do not change WireGuard behavior when using it as the endpoint pattern.
+使用 `python3 tools/patchset.py`；工具只依赖 Python 标准库和 Git。正式快照用 `branch` 完整预检和生成；研究用 `generate --only ID`；只读预检用 `check`。现有脏 worktree、不同 commit 的同名分支、tag 冲突或并发锁冲突必须停止并保留原状态，不能 reset、clean、stash 或 force。
 
-## Android/SFA rules
+上游 URL、准确 ref、完整 base 以 manifest 为准，不以最近 tag 替代。已有 `vX.Y.Z` 快照不可修改；同版本新补丁用未占用的 `vX.Y.Z-patchset-N`。官方 release tag 不得被 fork 发布重写。
 
-- SFA Android builds must include iWAN and gVisor in mobile libbox. If SFA reports that iWAN is not included, check `cmd/internal/build_libbox/main.go` before checking release tag files.
-- SFA APK signing must use stable release signing secrets. Do not add or restore temporary/generated signing-key fallback for release APKs.
-- Expected signing secrets:
-  - `SFA_RELEASE_KEYSTORE`
-  - `SFA_KEYSTORE_PASS`
-  - `SFA_KEY_ALIAS`
-  - `SFA_KEY_PASS`
-- Never commit keystores, decoded signing files, generated secret files, or debug configs containing credentials.
-- SFA release output is intentionally limited to `arm64-v8a`.
-- For mobile iWAN troubleshooting, check MTU early. On 5G, start with iWAN MTU `1280`; if stable, try `1320` or `1360`. Avoid using `1420` as the default mobile MTU. If a `tun` inbound is used, keep `tun.mtu` aligned with the iWAN MTU.
+维护工具变更运行 `python3 -m unittest discover -s tools -p 'test_*.py' -v`。补丁变更运行完整预检、相关依赖闭包独立重放和对应 tests.json；不能用 plan、树相同或仅转译成功替代行为测试。Go 检查在生成目录运行，变更 Go 文件须 gofmt。交付前检查原始 patch 字节、应用 diff 和维护 diff 的 `git diff --check`；不要格式化 patch。
 
-## Release artifact policy
+iWAN 必须同时带 `with_iwan,with_gvisor`，核 CLI release 文件、mobile/libbox、include/stub 和 lint 标签。必跑定向入口在 iwan/tests.json；手机就绪与 MTU 等限制见应用指引。Fallback 的 daemon、真实失败通知与路由接线，schema 和共享注册项必须随所属组验证。
 
-- Keep release assets narrow and predictable.
-- Keep SFA APK output.
-- Keep CLI archives only for:
-  - Systems: `linux`, `windows`, `darwin`, `freebsd`.
-  - Architectures: `amd64`, `arm64`.
-  - Linux variants: pure Go and musl only.
-- Do not build or publish glibc Linux assets.
-- Do not publish SFM, deb, OpenWrt, or other upstream assets unless explicitly requested.
-- Preserve macOS CLI binaries, but do not reintroduce SFM just for macOS.
+## CI 与授权
 
-## Validation rules
+复用原有有效构建步骤，只保留既定 CLI 平台/架构、Linux pure Go/musl 和 arm64-v8a SFA。四项稳定 SFA 签名 secret：`SFA_RELEASE_KEYSTORE`、`SFA_KEYSTORE_PASS`、`SFA_KEY_ALIAS`、`SFA_KEY_PASS`。不得恢复临时密钥、不输出秘密、不提交 keystore 或真实网络凭据。
 
-- For iWAN code changes, run focused tests with build tags:
-  - `go test -tags with_iwan,with_gvisor ./transport/iwan ./protocol/iwan ./option`
-  - `go test -tags with_iwan,with_gvisor ./include`
-- For mobile/libbox tag changes, run:
-  - `go test -run '^$' ./cmd/internal/build_libbox`
-- Always run `gofmt` on changed Go files and `git diff --check` before reporting completion.
-- For release or CI changes, verify the GitHub Actions build result and inspect the published asset list.
-- For SFA iWAN inclusion issues, verify Android job logs show both:
-  - `github.com/sagernet/sing-box/transport/iwan`
-  - `github.com/sagernet/sing-box/protocol/iwan`
-- For real iWAN smoke tests, use throwaway local debug configs and do not commit credentials or generated logs containing secrets.
+PR 仅验证。发布只在合入 main 并通过检查后重建精确维护 SHA，核对应用 commit/tree 和最终资产集合。应用分支原文归档上游 workflow，不能成为第二发布入口。workflow 变更做 actionlint 等静态检查；真实 Actions、签名 APK 与发布资产只能在获准执行后声称验证。
+
+提交维护变更、push、创建或合并 PR、改默认分支、创建远端 tag/Release、dispatch CI、发布、部署、操作真实网络设备或重写历史，均须在当前用户明确授权的范围内执行。对本地生成分支与实现提交的授权不扩展到这些动作。

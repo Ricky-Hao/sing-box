@@ -1,0 +1,3 @@
+*.patch -text -whitespace
+tools/patchset.py text eol=lf
+tools/application-AGENTS.md text eol=lf
