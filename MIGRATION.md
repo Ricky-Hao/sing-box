@@ -177,3 +177,11 @@ SFA 客户端固定到应用现有 gitlink `f87c2ebdb7e34754be751bb5e58926db2fed
 用户已明确授权采用既定迁移。本阶段负责清理主文中的本地候选阶段限制、提交已审维护内容、使用已提交维护 SHA 严格核验生成结果，并普通推送 `chore/feature-patchset` 和精确的 `refs/heads/v1.14.4`。main 引导、PR 平台合并和默认分支设置交负责人后续处理；本记录不声称这些动作、远端 CI 或发布已经完成。
 
 本轮只调整 README、MAINTENANCE、AGENTS 的长期流程表述并补充本记录，未改五组 patch、manifest、生成器、CI 或应用源码。应用身份仍为前述 commit/tree，无需更换快照名；既有重放和业务测试证据继续有效。精确暂存范围、已提交维护 SHA、严格生成核验及两个远端 ref 的执行结果留在原工作区 `.work/adoption-*.json` 与日志中。
+
+## PR CI 的 ShellCheck 修复
+
+2026-11-13，PR #17 的运行 `43405593751`（attempt 1）在 prepare 的 Workflow syntax 步骤失败：`build.yml` 的 PATH 导出触发 SC2155，AAR 复制 glob 触发 SC2035。此前维护工具测试、精确源码重建和 whitespace 步骤均成功，后续 job 因 prepare 失败跳过。
+
+原本地检查环境没有 ShellCheck，actionlint 因此跳过了脚本检查。本次在 `.work` 安装 ShellCheck 0.10.0，配合 actionlint 1.7.12 复现上述两项诊断；将 PATH 赋值与导出分开，保留继承的 PATH 并让 `go env GOPATH` 失败由 `set -e` 传播，将复制来源改为 `./*.aar`。修复后使用原配置并显式启用 ShellCheck 检查全部现有 workflow，通过；`git diff --check` 通过。版本和前后检查日志保存在原工作区 `.work/ci-shellcheck-*.log`。
+
+本次只修改维护层 workflow 和本节记录，五组 patch、manifest、生成器与应用源码保持不变，沿用既有重放和业务测试证据。应用仍为 `v1.14.4`、commit `ca3b2070fde38fcc4cc3d862d8d567cff6ec0124`、tree `3d2273ce97e857b6ff0cdd1700665728be63258c`。

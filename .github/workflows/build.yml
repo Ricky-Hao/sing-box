@@ -312,7 +312,8 @@ jobs:
         run: |
           set -euo pipefail
           make lib_install
-          export PATH="$PATH:$(go env GOPATH)/bin"
+          PATH="$PATH:$(go env GOPATH)/bin"
+          export PATH
           go run ./cmd/internal/build_libbox -target android -platform android/arm64 2>&1 | tee "$RUNNER_TEMP/libbox-build.log"
           grep -Fq 'github.com/sagernet/sing-box/transport/iwan' "$RUNNER_TEMP/libbox-build.log"
           grep -Fq 'github.com/sagernet/sing-box/protocol/iwan' "$RUNNER_TEMP/libbox-build.log"
@@ -371,7 +372,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p clients/android/app/libs
-          cp *.aar clients/android/app/libs
+          cp ./*.aar clients/android/app/libs
           cd clients/android
           if [ -z "${SFA_RELEASE_KEYSTORE:-}" ] || [ -z "${SFA_KEYSTORE_PASS:-}" ] || [ -z "${SFA_KEY_ALIAS:-}" ] || [ -z "${SFA_KEY_PASS:-}" ]; then
             echo '::error::Set all four stable SFA signing secrets before release.'
