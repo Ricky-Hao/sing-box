@@ -180,6 +180,32 @@ class PatchsetTests(unittest.TestCase):
         self.assertEqual((generated / 'untracked.txt').read_text(), 'user untracked\n')
         self.assertEqual(patchset.git(generated, 'rev-parse', 'HEAD'), head)
 
+    def test_branch_identity_and_ci_inputs_survive_windows_checkout_settings(self):
+        (self.root / '.gitattributes').write_bytes((CLI.parents[1] / '.gitattributes').read_bytes())
+        (self.root / 'tools/patchset.py').write_bytes(b'# generator fixture\n')
+        generated = self.branch_fixture()
+        previous = self.maintenance_git('rev-parse', 'HEAD').decode().strip()
+        result = self.cli('branch', target=generated)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        identity = patchset.git(generated, 'rev-parse', 'HEAD', 'HEAD^{tree}')
+
+        independent = self.root.with_name('windows-maintenance')
+        subprocess.run(['git', 'clone', '-q', '--no-hardlinks', '--no-tags',
+                        '--config', 'core.autocrlf=true', '--config', 'core.filemode=false',
+                        str(self.root), str(independent)], check=True, capture_output=True)
+        self.assertIn(b'\r\n', (independent / 'patches/first/README.md').read_bytes())
+        self.assertEqual(patchset.git(independent, 'config', '--get', 'core.filemode'), b'false\n')
+        rebuilt = generated.with_name('windows-application')
+        result = self.cli('branch', '--source', str(self.target), root=independent, target=rebuilt)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(patchset.git(rebuilt, 'rev-parse', 'HEAD', 'HEAD^{tree}'), identity)
+        self.assertEqual(patchset.git(rebuilt, 'show', 'HEAD:AGENTS.md'),
+                         self.maintenance_git('show', 'HEAD:tools/application-AGENTS.md'))
+        self.assertFalse(ci_tools.release_needed(independent, patchset.load_manifest(independent), previous))
+        self.assertEqual(patchset.git(independent, 'status', '--porcelain'), b'')
+        self.assertEqual(patchset.git(rebuilt, 'status', '--porcelain'), b'')
+        self.assert_clean()
+
     def test_branch_collision_and_old_detached_checkout_are_never_overwritten(self):
         generated = self.branch_fixture()
         name = self.manifest['application']['branch']

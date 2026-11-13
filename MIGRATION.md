@@ -185,3 +185,13 @@ SFA 客户端固定到应用现有 gitlink `f87c2ebdb7e34754be751bb5e58926db2fed
 原本地检查环境没有 ShellCheck，actionlint 因此跳过了脚本检查。本次在 `.work` 安装 ShellCheck 0.10.0，配合 actionlint 1.7.12 复现上述两项诊断；将 PATH 赋值与导出分开，保留继承的 PATH 并让 `go env GOPATH` 失败由 `set -e` 传播，将复制来源改为 `./*.aar`。修复后使用原配置并显式启用 ShellCheck 检查全部现有 workflow，通过；`git diff --check` 通过。版本和前后检查日志保存在原工作区 `.work/ci-shellcheck-*.log`。
 
 本次只修改维护层 workflow 和本节记录，五组 patch、manifest、生成器与应用源码保持不变，沿用既有重放和业务测试证据。应用仍为 `v1.14.4`、commit `ca3b2070fde38fcc4cc3d862d8d567cff6ec0124`、tree `3d2273ce97e857b6ff0cdd1700665728be63258c`。
+
+## PR CI 的 Windows 重建修复
+
+2026-11-13，PR #17 的 run `43406353782` attempt 1 在 Windows job `131821868245` 的 `Rebuild validated snapshot` 步骤失败：自身 verify 通过，但生成的 commit `230ca14600238f567514cd06a6d1863396f0e08f` / tree `f48ffb939d56ad84fced642f9ff4b9aec6fa8d30` 与 prepare 的应用身份不符。
+
+在隔离 clone 中对原维护 SHA `740e07fca3746d3f3efec804f5ce73f4dd3097c3` 启用 `core.autocrlf=true`、`core.filemode=false`，精确复现了上述 Windows commit/tree。与原应用相比，仅 `AGENTS.md` blob 从 `9f2da69caab6cd40cefec3a568c8117ce641aa95` 变为 `619ce14adb9c1d8c5dbacbc9a49ceafd6bf2ce60`：维护 checkout 把指引模板转成 CRLF，生成器直接读取这些字节。文件模式与五个业务实现提交均相同。原失败和 blob 对比保存在 `.work/windows-rebuild-before/`。
+
+修正仅在 `.gitattributes` 为 `tools/application-AGENTS.md` 和同样参与 CI 输入哈希的 `tools/patchset.py` 指定 `text eol=lf`，保留 patch 的 `-text`。规范输入字节未变，继续使用原 `v1.14.4` commit `ca3b2070fde38fcc4cc3d862d8d567cff6ec0124` / tree `3d2273ce97e857b6ff0cdd1700665728be63258c`；没有修改生成器、快照保护或跨 job 的身份校验。
+
+新增真实 clone 回归，覆盖 CRLF checkout、文件模式设置、应用 commit/tree、指引 blob 和 CI 输入比较；修复前该测试在身份比较处失败，修复后维护工具全部 35 项测试通过。actionlint v1.7.12 显式调用 ShellCheck v0.10.0 检查两个 workflow，通过。日志为 `.work/windows-regression-before.log`、`.work/windows-tool-tests.log` 和 `.work/windows-actionlint.log`。原业务验证继续复用。

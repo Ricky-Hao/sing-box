@@ -109,6 +109,8 @@ mv patches/fallback/changes.patch.next patches/fallback/changes.patch
 
 根 CI 对 PR 合并预览及 main push 的精确 SHA 生成源码，运行维护工具自测、五组独立依赖闭包合同、完整分支合同、原有多平台 Go 测试及适用 lint。所有后续 job 从同一维护 SHA 重建，核对期望的应用 commit/tree。main 的精确提交须能通过 GitHub 只读 API 关联到已合并到 main 的 PR，且该次全部检查通过，才调用构建；直接初始化 main 仅验证。PR 不进入签名/发布 job，来自外部 fork 的 PR 也不需要写 token 或签名 secret。
 
+生成器 `tools/patchset.py` 与应用指引 `tools/application-AGENTS.md` 的原始字节参与生成输入哈希，指引还直接写入应用 tree；`.gitattributes` 将这两个文件固定为 LF，避免 Windows `core.autocrlf` 改变重建身份。补丁继续使用 `-text` 保留原始字节，不格式化 patch。
+
 构建复用旧 fork 有效 CLI/cronet、gomobile、NDK r28、JDK 17 与 Gradle 步骤。Android 子模块使用上游 gitlink 固定版本，不 checkout 浮动 main/dev。仅编译 arm64 libbox，两个原有 Android API 变体仍保留；必须从日志核实 transport/iwan 和 protocol/iwan 都被编译。稳定签名四 secret 缺一即失败，禁止临时密钥。签名文件仅存在于运行器并清理，不上传源码工作树。
 
 发布标签为 `patchset-<application.branch>`，例如 `patchset-v1.14.4-patchset-2`，指向精确维护 SHA；Release 正文记录上游 base、应用 branch/commit/tree 和重建入口。它与官方 `v1.14.4`、应用版本分支是三种不同对象。资产来自该次核对后的构建，发布前核完整白名单；同名 Release/tag 不覆盖，不使用 --clobber、--replace 或 force。应用版本分支按当前授权用精确 refspec 推送，保留上游 workflow 的原文归档，不启用上游 workflow。
