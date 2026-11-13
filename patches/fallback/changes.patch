@@ -1,0 +1,2016 @@
+diff --git a/adapter/outbound.go b/adapter/outbound.go
+index d8783cbe75e4236002102190b01aef69b4cce8e2..a62e9b8cd6c78edb296d8fd0d2a42667cb76d6ff 100644
+--- a/adapter/outbound.go
++++ b/adapter/outbound.go
+@@ -31,6 +31,11 @@ type OutboundWithMultiplex interface {
+ 	MultiplexEnabled() bool
+ }
+ 
++// OutboundConnectionFailureListener is notified after the failed leaf's URL test history is removed.
++type OutboundConnectionFailureListener interface {
++	ConnectionFailed(outboundTag string)
++}
++
+ type FlowOutbound interface {
+ 	Outbound
+ 	tun.Port
+diff --git a/constant/proxy.go b/constant/proxy.go
+index 7c92ab43ba5d5bdfd9c4f485bf2a55743be8f590..7a66f6de7db98cadebc2152d8540e16bb5c60c5e 100644
+--- a/constant/proxy.go
++++ b/constant/proxy.go
+@@ -49,6 +49,7 @@ const (
+ const (
+ 	TypeSelector = "selector"
+ 	TypeURLTest  = "urltest"
++	TypeFallback = "fallback"
+ )
+ 
+ func ProxyDisplayName(proxyType string) string {
+@@ -119,6 +120,8 @@ func ProxyDisplayName(proxyType string) string {
+ 		return "Selector"
+ 	case TypeURLTest:
+ 		return "URLTest"
++	case TypeFallback:
++		return "Fallback"
+ 	default:
+ 		return "Unknown"
+ 	}
+diff --git a/daemon/started_service.go b/daemon/started_service.go
+index 41c9c926a0709981d42aac5a742ebf8b02b96c61..17fdfc8f5fdf3c3c8c5f773bf3fc143887dfe74a 100644
+--- a/daemon/started_service.go
++++ b/daemon/started_service.go
+@@ -728,10 +728,12 @@ func (s *StartedService) URLTest(ctx context.Context, request *URLTestRequest) (
+ 		return nil, status.Error(codes.NotFound, "outbound not found: "+outboundTag)
+ 	}
+ 	historyStorage := boxService.urlTestHistoryStorage
+-	urlTest, isURLTest := outbound.(*group.URLTest)
++	urlTestGroup, isURLTestGroup := outbound.(adapter.URLTestGroup)
+ 	outboundGroup, isOutboundGroup := outbound.(adapter.OutboundGroup)
+-	if isURLTest {
+-		go urlTest.CheckOutbounds()
++	if isURLTestGroup {
++		go func() {
++			_, _ = urlTestGroup.URLTest(boxService.ctx)
++		}()
+ 	} else if isOutboundGroup {
+ 		outbounds := common.FilterNotNil(common.Map(outboundGroup.All(), func(it string) adapter.Outbound {
+ 			itOutbound, _ := boxService.outboundManager.Outbound(it)
+diff --git a/docs/clients/general.md b/docs/clients/general.md
+index 4d57c991ce707eda797bd8f51502bbd922d59ca0..0353935db8e87e830d489381dc2b9f60ff7933d3 100644
+--- a/docs/clients/general.md
++++ b/docs/clients/general.md
+@@ -49,7 +49,7 @@ Dashboard should provide a Mode selector for switching when the configuration us
+ 
+ #### Groups
+ 
+-When the configuration includes group outbounds (specifically, Selector or URLTest),
++When the configuration includes group outbounds (specifically, Selector, URLTest, or Fallback),
+ the dashboard should provide a Group selector for status display or switching.
+ 
+ ### Chore
+diff --git a/docs/configuration/outbound/fallback.md b/docs/configuration/outbound/fallback.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..86d8a79d3044ec4408c8d5607599079eb7693b3e
+--- /dev/null
++++ b/docs/configuration/outbound/fallback.md
+@@ -0,0 +1,61 @@
++### Structure
++
++```json
++{
++  "type": "fallback",
++  "tag": "fallback",
++
++  "outbounds": [
++    "proxy-a",
++    "proxy-b",
++    "proxy-c"
++  ],
++  "url": "",
++  "interval": "",
++  "idle_timeout": "",
++  "interrupt_exist_connections": false
++}
++```
++
++### Fields
++
++#### outbounds
++
++==Required==
++
++List of outbound tags to test.
++
++The order is used as priority from high to low. The first available outbound will be selected.
++
++#### url
++
++The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
++
++Use `tcp://host:port` to perform a pure TCP connect probe without HTTP or TLS overhead.
++
++#### interval
++
++The maximum health check budget. `3m` will be used if empty.
++
++Fallback internally splits this value into probe scheduling time and probe timeout:
++
++* probe timeout: `min(15s, interval / 2)`
++* probe scheduling time: `interval - probe timeout`
++
++This prevents one slow URL test from occupying the whole interval and blocking the next scheduled check.
++
++To reduce flapping on weak or switching networks without increasing failover time, scheduled background checks mark a failed outbound unavailable immediately, but require two consecutive successful background probes before failing back to a higher-priority recovered outbound. Forced checks and real connection failures still update availability immediately.
++
++A failed real connection is not retried. If a healthy backup exists, selection changes immediately for subsequent requests, including connections routed through nested selectors. Nested groups resolve their current selection separately for TCP and UDP.
++
++#### idle_timeout
++
++The idle timeout. `30m` will be used if empty.
++
++Health checks stop after this outbound is idle for the configured timeout, and restart when the outbound is used again.
++
++#### interrupt_exist_connections
++
++Interrupt existing connections when the selected outbound has changed.
++
++Only inbound connections are affected by this setting, internal connections will always be interrupted.
+diff --git a/docs/configuration/outbound/fallback.zh.md b/docs/configuration/outbound/fallback.zh.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..b0d10846e023713757c3ecdd253394d7fe1ad454
+--- /dev/null
++++ b/docs/configuration/outbound/fallback.zh.md
+@@ -0,0 +1,61 @@
++### 结构
++
++```json
++{
++  "type": "fallback",
++  "tag": "fallback",
++
++  "outbounds": [
++    "proxy-a",
++    "proxy-b",
++    "proxy-c"
++  ],
++  "url": "",
++  "interval": "",
++  "idle_timeout": "",
++  "interrupt_exist_connections": false
++}
++```
++
++### 字段
++
++#### outbounds
++
++==必填==
++
++用于测试的出站标签列表。
++
++列表顺序即优先级，从高到低选择第一个可用的出站。
++
++#### url
++
++用于测试的链接。默认使用 `https://www.gstatic.com/generate_204`。
++
++使用 `tcp://host:port` 可以执行纯 TCP 连接探测，避免 HTTP 和 TLS 开销。
++
++#### interval
++
++最大健康检查预算。默认使用 `3m`。
++
++Fallback 会在内部把该值拆分为探测调度时间和探测超时：
++
++* 探测超时：`min(15s, interval / 2)`
++* 探测调度时间：`interval - 探测超时`
++
++这样可以避免单次较慢的 URL 测试占满整个 interval，阻塞下一轮定时检查。
++
++为了减少弱网或网络切换时的抖动，同时不增加故障切换时间，后台定时检查会在探测失败后立即将该出站标记为不可用，但需要连续两次后台探测成功后才会回切到恢复的更高优先级出站。强制检查和真实连接失败仍会立即更新可用状态。
++
++真实连接失败不会重试当前请求；若有健康的备用出站，会立即更新选择，后续请求使用备用出站。此行为同样适用于通过 selector 等嵌套组路由的连接。嵌套组按 TCP/UDP 分别解析当前选择。
++
++#### idle_timeout
++
++空闲超时。默认使用 `30m`。
++
++当该出站空闲超过配置的超时时间后，健康检查会停止；再次使用该出站时重新启动健康检查。
++
++#### interrupt_exist_connections
++
++当选定的出站发生更改时，中断现有连接。
++
++仅入站连接受此设置影响，内部连接将始终被中断。
+diff --git a/docs/configuration/outbound/index.md b/docs/configuration/outbound/index.md
+index 2e37bdd588f1941a2cb8d1dd74e386a5e114c777..4b2a77460b77f2dac3cd52a52cc75eabd6a5a368 100644
+--- a/docs/configuration/outbound/index.md
++++ b/docs/configuration/outbound/index.md
+@@ -38,6 +38,7 @@
+ | `dns`          | [DNS](./dns/)                   |
+ | `selector`     | [Selector](./selector/)         |
+ | `urltest`      | [URLTest](./urltest/)           |
++| `fallback`     | [Fallback](./fallback/)         |
+ | `naive`        | [NaiveProxy](./naive/)          |
+ 
+ #### tag
+diff --git a/docs/configuration/outbound/index.zh.md b/docs/configuration/outbound/index.zh.md
+index d2203de8c7200f904155b0da52ec311a22d3978e..22cca6fe37469b4e4b2e9fd68ed5523c91ad7cfc 100644
+--- a/docs/configuration/outbound/index.zh.md
++++ b/docs/configuration/outbound/index.zh.md
+@@ -38,6 +38,7 @@
+ | `dns`          | [DNS](./dns/)                   |
+ | `selector`     | [Selector](./selector/)         |
+ | `urltest`      | [URLTest](./urltest/)           |
++| `fallback`     | [Fallback](./fallback/)         |
+ | `naive`        | [NaiveProxy](./naive/)          |
+ 
+ #### tag
+diff --git a/docs/schema.json b/docs/schema.json
+index 2bfbdeb68672ff8441c845417e9286f301cc03ad..d96ad2c1c374f0a943935140d1a807e35db57d01 100644
+--- a/docs/schema.json
++++ b/docs/schema.json
+@@ -11316,6 +11316,40 @@
+           ],
+           "additionalProperties": false
+         },
++        {
++          "type": "object",
++          "properties": {
++            "type": {
++              "const": "fallback"
++            },
++            "tag": {
++              "type": "string"
++            },
++            "outbounds": {
++              "type": "array",
++              "items": {
++                "type": "string",
++                "x-tag-reference": "outbound"
++              }
++            },
++            "url": {
++              "type": "string"
++            },
++            "interval": {
++              "$ref": "#/$defs/Duration"
++            },
++            "idle_timeout": {
++              "$ref": "#/$defs/Duration"
++            },
++            "interrupt_exist_connections": {
++              "type": "boolean"
++            }
++          },
++          "required": [
++            "type"
++          ],
++          "additionalProperties": false
++        },
+         {
+           "type": "object",
+           "properties": {
+diff --git a/include/registry.go b/include/registry.go
+index 12505f8b3544e51bd815bfa524071dcac14cf289..332abfb486a14d19af69b9fe4fc6a6a32dfe42b1 100644
+--- a/include/registry.go
++++ b/include/registry.go
+@@ -88,6 +88,7 @@ func OutboundRegistry() *outbound.Registry {
+ 
+ 	group.RegisterSelector(registry)
+ 	group.RegisterURLTest(registry)
++	group.RegisterFallback(registry)
+ 
+ 	socks.RegisterOutbound(registry)
+ 	http.RegisterOutbound(registry)
+diff --git a/mkdocs.yml b/mkdocs.yml
+index e556cece2c55882b423cebdef1284b1215c8a078..04f17304d2a6c040cd7ad1a16b6f80a19dd858fd 100644
+--- a/mkdocs.yml
++++ b/mkdocs.yml
+@@ -205,6 +205,7 @@ nav:
+           - DNS: configuration/outbound/dns.md
+           - Selector: configuration/outbound/selector.md
+           - URLTest: configuration/outbound/urltest.md
++          - Fallback: configuration/outbound/fallback.md
+       - Service:
+           - configuration/service/index.md
+           - sing-box API: configuration/service/api.md
+diff --git a/option/group.go b/option/group.go
+index bc0c07e47902c44cda57eb14f7de6ca13a6b698c..d017ab2e0f3de7ee76ee10e8e5e6a9162ccd820a 100644
+--- a/option/group.go
++++ b/option/group.go
+@@ -16,3 +16,11 @@ type URLTestOutboundOptions struct {
+ 	IdleTimeout               badoption.Duration `json:"idle_timeout,omitempty"`
+ 	InterruptExistConnections bool               `json:"interrupt_exist_connections,omitempty"`
+ }
++
++type FallbackOutboundOptions struct {
++	Outbounds                 []string           `json:"outbounds" reference:"outbound"`
++	URL                       string             `json:"url,omitempty"`
++	Interval                  badoption.Duration `json:"interval,omitempty"`
++	IdleTimeout               badoption.Duration `json:"idle_timeout,omitempty"`
++	InterruptExistConnections bool               `json:"interrupt_exist_connections,omitempty"`
++}
+diff --git a/protocol/group/fallback.go b/protocol/group/fallback.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..e08295ccf169b9bb3e5f8491fc20af199c200511
+--- /dev/null
++++ b/protocol/group/fallback.go
+@@ -0,0 +1,524 @@
++package group
++
++import (
++	"context"
++	"io"
++	"net"
++	"slices"
++	"sync"
++	"sync/atomic"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/adapter/outbound"
++	"github.com/sagernet/sing-box/common/interrupt"
++	"github.com/sagernet/sing-box/common/urltest"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing/common"
++	"github.com/sagernet/sing/common/batch"
++	E "github.com/sagernet/sing/common/exceptions"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/common/x/list"
++	"github.com/sagernet/sing/service"
++	"github.com/sagernet/sing/service/pause"
++)
++
++func RegisterFallback(registry *outbound.Registry) {
++	outbound.Register[option.FallbackOutboundOptions](registry, C.TypeFallback, NewFallback)
++}
++
++var (
++	_ adapter.OutboundGroup                     = (*Fallback)(nil)
++	_ adapter.URLTestGroup                      = (*Fallback)(nil)
++	_ adapter.Referrer                          = (*Fallback)(nil)
++	_ adapter.OutboundConnectionFailureListener = (*Fallback)(nil)
++)
++
++const fallbackURLTestSuccessThreshold = 2
++
++type Fallback struct {
++	outbound.Adapter
++	ctx                          context.Context
++	outbound                     adapter.OutboundManager
++	logger                       log.ContextLogger
++	tags                         []string
++	link                         string
++	interval                     time.Duration
++	idleTimeout                  time.Duration
++	group                        *FallbackGroup
++	interruptExternalConnections bool
++}
++
++func NewFallback(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, options option.FallbackOutboundOptions) (adapter.Outbound, error) {
++	fallback := &Fallback{
++		Adapter:                      outbound.NewAdapter(C.TypeFallback, tag, []string{N.NetworkTCP, N.NetworkUDP}, options.Outbounds),
++		ctx:                          ctx,
++		outbound:                     service.FromContext[adapter.OutboundManager](ctx),
++		logger:                       logger,
++		tags:                         options.Outbounds,
++		link:                         options.URL,
++		interval:                     time.Duration(options.Interval),
++		idleTimeout:                  time.Duration(options.IdleTimeout),
++		interruptExternalConnections: options.InterruptExistConnections,
++	}
++	if len(fallback.tags) == 0 {
++		return nil, E.New("missing tags")
++	}
++	for i, tag := range fallback.tags {
++		if slices.Contains(fallback.tags[:i], tag) {
++			return nil, E.New("duplicate tag: ", tag)
++		}
++	}
++	return fallback, nil
++}
++
++func (s *Fallback) Start(stage adapter.StartStage, scope *adapter.Scope) error {
++	switch stage {
++	case adapter.StartStateStart:
++		return s.startGroup(scope)
++	case adapter.StartStateStarted:
++		s.group.PostStart()
++	}
++	return nil
++}
++
++func (s *Fallback) startGroup(scope *adapter.Scope) error {
++	outbounds := make([]adapter.Outbound, 0, len(s.tags))
++	for i, tag := range s.tags {
++		detour, loaded := s.outbound.Outbound(tag)
++		if !loaded {
++			return E.New("outbound ", i, " not found: ", tag)
++		}
++		outbounds = append(outbounds, detour)
++	}
++	group, err := NewFallbackGroup(s.ctx, s.outbound, s.logger, outbounds, s.link, s.interval, s.idleTimeout, s.interruptExternalConnections)
++	if err != nil {
++		return err
++	}
++	s.group = group
++	scope.Add(group.Close)
++	return nil
++}
++
++func (s *Fallback) All() []string {
++	return s.tags
++}
++
++func (s *Fallback) Selected(network string) adapter.Outbound {
++	outbound := s.group.selectedOutbound(network)
++	if outbound == nil {
++		outbound, _ = s.group.Select(network)
++	}
++	return outbound
++}
++
++func (s *Fallback) AttachConnection(closer io.Closer) func() {
++	s.group.Touch()
++	return s.group.interruptGroup.Add(closer, true)
++}
++
++func (s *Fallback) References() []string {
++	if s.group == nil {
++		return nil
++	}
++	selectedOutboundTCP, selectedOutboundUDP := s.group.selectedOutbounds()
++	var references []string
++	if selectedOutboundTCP != nil {
++		references = append(references, selectedOutboundTCP.Tag())
++	}
++	if selectedOutboundUDP != nil && selectedOutboundUDP != selectedOutboundTCP {
++		references = append(references, selectedOutboundUDP.Tag())
++	}
++	return references
++}
++
++func (s *Fallback) URLTest(ctx context.Context) (map[string]uint16, error) {
++	return s.group.URLTest(ctx)
++}
++
++func (s *Fallback) CheckOutbounds() {
++	s.group.CheckOutbounds(true)
++}
++
++func (s *Fallback) PerformUpdateCheck() {
++	s.group.performUpdateCheck()
++}
++
++func (s *Fallback) ConnectionFailed(outboundTag string) {
++	s.group.clearURLTestSuccesses(outboundTag)
++	s.group.performUpdateCheck()
++}
++
++func (s *Fallback) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	s.group.Touch()
++	var outbound adapter.Outbound
++	switch N.NetworkName(network) {
++	case N.NetworkTCP:
++		outbound = s.group.selectedOutbound(N.NetworkTCP)
++	case N.NetworkUDP:
++		outbound = s.group.selectedOutbound(N.NetworkUDP)
++	default:
++		return nil, E.Extend(N.ErrUnknownNetwork, network)
++	}
++	if outbound == nil {
++		outbound, _ = s.group.Select(network)
++	}
++	if outbound == nil {
++		return nil, E.New("missing supported outbound")
++	}
++	conn, err := outbound.DialContext(ctx, network, destination)
++	if err == nil {
++		return s.group.interruptGroup.NewConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
++	}
++	s.logger.ErrorContext(ctx, err)
++	s.group.deleteURLTestHistory(RealTag(outbound, network))
++	s.group.performUpdateCheck()
++	return nil, err
++}
++
++func (s *Fallback) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	s.group.Touch()
++	outbound := s.group.selectedOutbound(N.NetworkUDP)
++	if outbound == nil {
++		outbound, _ = s.group.Select(N.NetworkUDP)
++	}
++	if outbound == nil {
++		return nil, E.New("missing supported outbound")
++	}
++	conn, err := outbound.ListenPacket(ctx, destination)
++	if err == nil {
++		return s.group.interruptGroup.NewPacketConn(conn, interrupt.IsExternalConnectionFromContext(ctx)), nil
++	}
++	s.logger.ErrorContext(ctx, err)
++	s.group.deleteURLTestHistory(RealTag(outbound, N.NetworkUDP))
++	s.group.performUpdateCheck()
++	return nil, err
++}
++
++type FallbackGroup struct {
++	ctx                          context.Context
++	outbound                     adapter.OutboundManager
++	pause                        pause.Manager
++	pauseCallback                *list.Element[pause.Callback]
++	logger                       log.Logger
++	outbounds                    []adapter.Outbound
++	link                         string
++	interval                     time.Duration
++	probeInterval                time.Duration
++	probeTimeout                 time.Duration
++	idleTimeout                  time.Duration
++	history                      *urltest.HistoryStorage
++	urlTestSuccesses             map[string]uint8
++	urlTestSuccessesAccess       sync.Mutex
++	checking                     atomic.Bool
++	selectedOutboundTCP          adapter.Outbound
++	selectedOutboundUDP          adapter.Outbound
++	selectedOutboundAccess       sync.RWMutex
++	interruptGroup               *interrupt.Group
++	interruptExternalConnections bool
++	access                       sync.Mutex
++	updateAccess                 sync.Mutex
++	ticker                       *time.Ticker
++	close                        context.CancelFunc
++	started                      bool
++	lastActive                   common.TypedValue[time.Time]
++}
++
++func NewFallbackGroup(ctx context.Context, outboundManager adapter.OutboundManager, logger log.Logger, outbounds []adapter.Outbound, link string, interval time.Duration, idleTimeout time.Duration, interruptExternalConnections bool) (*FallbackGroup, error) {
++	if interval == 0 {
++		interval = C.DefaultURLTestInterval
++	}
++	probeInterval, probeTimeout := fallbackProbeTiming(interval)
++	if idleTimeout == 0 {
++		idleTimeout = C.DefaultURLTestIdleTimeout
++	}
++	if interval > idleTimeout {
++		return nil, E.New("interval must be less or equal than idle_timeout")
++	}
++	history := service.PtrFromContext[urltest.HistoryStorage](ctx)
++	if history == nil {
++		return nil, E.New("missing URL test history storage")
++	}
++	groupCtx, cancel := context.WithCancel(ctx)
++	return &FallbackGroup{
++		ctx:                          groupCtx,
++		outbound:                     outboundManager,
++		logger:                       logger,
++		outbounds:                    outbounds,
++		link:                         link,
++		interval:                     interval,
++		probeInterval:                probeInterval,
++		probeTimeout:                 probeTimeout,
++		idleTimeout:                  idleTimeout,
++		history:                      history,
++		urlTestSuccesses:             make(map[string]uint8),
++		close:                        cancel,
++		pause:                        service.FromContext[pause.Manager](ctx),
++		interruptGroup:               interrupt.NewGroup(),
++		interruptExternalConnections: interruptExternalConnections,
++	}, nil
++}
++
++func (g *FallbackGroup) PostStart() {
++	g.access.Lock()
++	defer g.access.Unlock()
++	g.started = true
++	g.lastActive.Store(time.Now())
++	go g.CheckOutbounds(false)
++}
++
++func (g *FallbackGroup) Touch() {
++	g.access.Lock()
++	defer g.access.Unlock()
++	if !g.started || g.ctx.Err() != nil {
++		return
++	}
++	if g.ticker != nil {
++		g.lastActive.Store(time.Now())
++		return
++	}
++	ticker := time.NewTicker(g.probeInterval)
++	g.ticker = ticker
++	g.pauseCallback = pause.RegisterTicker(g.pause, ticker, g.probeInterval, nil)
++	go g.loopCheck(ticker)
++}
++
++func (g *FallbackGroup) Close() error {
++	g.access.Lock()
++	defer g.access.Unlock()
++	g.started = false
++	g.close()
++	if g.ticker == nil {
++		return nil
++	}
++	g.ticker.Stop()
++	g.ticker = nil
++	g.pause.UnregisterCallback(g.pauseCallback)
++	g.pauseCallback = nil
++	return nil
++}
++
++func (g *FallbackGroup) Select(network string) (adapter.Outbound, bool) {
++	return g.selectOutbound(network, g.selectedOutbound(network))
++}
++
++func (g *FallbackGroup) selectedOutbound(network string) adapter.Outbound {
++	g.selectedOutboundAccess.RLock()
++	defer g.selectedOutboundAccess.RUnlock()
++	switch network {
++	case N.NetworkTCP:
++		return g.selectedOutboundTCP
++	case N.NetworkUDP:
++		return g.selectedOutboundUDP
++	}
++	return nil
++}
++
++func (g *FallbackGroup) selectedOutbounds() (adapter.Outbound, adapter.Outbound) {
++	g.selectedOutboundAccess.RLock()
++	defer g.selectedOutboundAccess.RUnlock()
++	return g.selectedOutboundTCP, g.selectedOutboundUDP
++}
++
++func (g *FallbackGroup) selectOutbound(network string, current adapter.Outbound) (adapter.Outbound, bool) {
++	for _, detour := range g.outbounds {
++		if !common.Contains(detour.Network(), network) {
++			continue
++		}
++		if g.history.LoadURLTestHistory(RealTag(detour, network)) != nil && g.canSelect(detour, current, network) {
++			return detour, true
++		}
++	}
++	for _, detour := range g.outbounds {
++		if !common.Contains(detour.Network(), network) {
++			continue
++		}
++		return detour, false
++	}
++	return nil, false
++}
++
++func fallbackProbeTiming(interval time.Duration) (probeInterval time.Duration, probeTimeout time.Duration) {
++	probeTimeout = min(C.TCPTimeout, interval/2)
++	if probeTimeout <= 0 {
++		probeTimeout = interval
++	}
++	probeInterval = interval - probeTimeout
++	if probeInterval <= 0 {
++		probeInterval = interval
++	}
++	return
++}
++
++func (g *FallbackGroup) loopCheck(ticker *time.Ticker) {
++	if time.Since(g.lastActive.Load()) > g.probeInterval {
++		g.lastActive.Store(time.Now())
++		g.CheckOutbounds(false)
++	}
++	for {
++		select {
++		case <-g.ctx.Done():
++			return
++		case <-ticker.C:
++		}
++		if time.Since(g.lastActive.Load()) > g.idleTimeout {
++			g.access.Lock()
++			if g.ticker == ticker {
++				g.ticker.Stop()
++				g.ticker = nil
++				g.pause.UnregisterCallback(g.pauseCallback)
++				g.pauseCallback = nil
++			}
++			g.access.Unlock()
++			return
++		}
++		g.CheckOutbounds(false)
++	}
++}
++
++func (g *FallbackGroup) CheckOutbounds(force bool) {
++	_, _ = g.urlTest(g.ctx, force, false)
++}
++
++func (g *FallbackGroup) URLTest(ctx context.Context) (map[string]uint16, error) {
++	return g.urlTest(ctx, false, true)
++}
++
++func (g *FallbackGroup) urlTest(ctx context.Context, force bool, skipRecentHistory bool) (map[string]uint16, error) {
++	result := make(map[string]uint16)
++	if g.checking.Swap(true) {
++		return result, nil
++	}
++	defer g.checking.Store(false)
++	b, _ := batch.New(ctx, batch.WithConcurrencyNum[any](10))
++	checked := make(map[string]bool)
++	var resultAccess sync.Mutex
++	for _, detour := range g.outbounds {
++		tag := detour.Tag()
++		realTag := RealTag(detour, N.NetworkTCP)
++		if checked[realTag] {
++			continue
++		}
++		history := g.history.LoadURLTestHistory(realTag)
++		if skipRecentHistory && !force && history != nil && time.Since(history.Time) < g.interval {
++			continue
++		}
++		checked[realTag] = true
++		p, loaded := g.outbound.Outbound(realTag)
++		if !loaded {
++			continue
++		}
++		b.Go(realTag, func() (any, error) {
++			testCtx, cancel := context.WithTimeout(ctx, g.probeTimeout)
++			defer cancel()
++			t, err := urltest.URLTest(testCtx, g.link, p)
++			if err != nil {
++				if ctx.Err() != nil {
++					return nil, nil
++				}
++				g.logger.Debug("outbound ", tag, " unavailable: ", err)
++				g.deleteURLTestHistory(realTag)
++			} else {
++				g.logger.Debug("outbound ", tag, " available: ", t, "ms")
++				g.reportURLTestSuccess(realTag, force || skipRecentHistory)
++				g.history.StoreURLTestHistory(realTag, &adapter.URLTestHistory{
++					Time:  time.Now(),
++					Delay: t,
++				})
++				resultAccess.Lock()
++				result[tag] = t
++				resultAccess.Unlock()
++			}
++			return nil, nil
++		})
++	}
++	b.Wait()
++	g.performUpdateCheck()
++	return result, nil
++}
++
++func (g *FallbackGroup) deleteURLTestHistory(realTag string) {
++	g.clearURLTestSuccesses(realTag)
++	g.history.DeleteURLTestHistory(realTag)
++}
++
++func (g *FallbackGroup) reportURLTestSuccess(realTag string, immediate bool) {
++	g.urlTestSuccessesAccess.Lock()
++	defer g.urlTestSuccessesAccess.Unlock()
++	if immediate {
++		g.urlTestSuccesses[realTag] = fallbackURLTestSuccessThreshold
++		return
++	}
++	successes := g.urlTestSuccesses[realTag]
++	if successes < fallbackURLTestSuccessThreshold {
++		successes++
++	}
++	g.urlTestSuccesses[realTag] = successes
++}
++
++func (g *FallbackGroup) clearURLTestSuccesses(realTag string) {
++	g.urlTestSuccessesAccess.Lock()
++	delete(g.urlTestSuccesses, realTag)
++	g.urlTestSuccessesAccess.Unlock()
++}
++
++func (g *FallbackGroup) canSelect(candidate adapter.Outbound, current adapter.Outbound, network string) bool {
++	if current == nil || candidate.Tag() == current.Tag() {
++		return true
++	}
++	if g.history.LoadURLTestHistory(RealTag(current, network)) == nil {
++		return true
++	}
++	candidateIndex := g.priorityIndex(candidate)
++	currentIndex := g.priorityIndex(current)
++	if candidateIndex == -1 || currentIndex == -1 || candidateIndex >= currentIndex {
++		return true
++	}
++	g.urlTestSuccessesAccess.Lock()
++	successes := g.urlTestSuccesses[RealTag(candidate, network)]
++	g.urlTestSuccessesAccess.Unlock()
++	return successes >= fallbackURLTestSuccessThreshold
++}
++
++func (g *FallbackGroup) priorityIndex(outbound adapter.Outbound) int {
++	for i, detour := range g.outbounds {
++		if detour.Tag() == outbound.Tag() {
++			return i
++		}
++	}
++	return -1
++}
++
++func (g *FallbackGroup) performUpdateCheck() {
++	g.updateAccess.Lock()
++	defer g.updateAccess.Unlock()
++	selectedOutboundTCP, selectedOutboundUDP := g.selectedOutbounds()
++	nextOutboundTCP := selectedOutboundTCP
++	nextOutboundUDP := selectedOutboundUDP
++	var updated bool
++	if outbound, exists := g.selectOutbound(N.NetworkTCP, selectedOutboundTCP); outbound != nil && (selectedOutboundTCP == nil || (exists && outbound != selectedOutboundTCP)) {
++		if selectedOutboundTCP != nil {
++			updated = true
++		}
++		nextOutboundTCP = outbound
++	}
++	if outbound, exists := g.selectOutbound(N.NetworkUDP, selectedOutboundUDP); outbound != nil && (selectedOutboundUDP == nil || (exists && outbound != selectedOutboundUDP)) {
++		if selectedOutboundUDP != nil {
++			updated = true
++		}
++		nextOutboundUDP = outbound
++	}
++	g.selectedOutboundAccess.Lock()
++	g.selectedOutboundTCP = nextOutboundTCP
++	g.selectedOutboundUDP = nextOutboundUDP
++	g.selectedOutboundAccess.Unlock()
++	if updated {
++		g.interruptGroup.Interrupt(g.interruptExternalConnections)
++	}
++	if nextOutboundTCP != selectedOutboundTCP || nextOutboundUDP != selectedOutboundUDP {
++		g.history.NotifyUpdated()
++	}
++}
+diff --git a/protocol/group/fallback_race_test.go b/protocol/group/fallback_race_test.go
+index 5e696c754aa427e0c51bddbc0b5d251fad9b766f..df208dfc2c47c82bd367e376ef3e02240917d94f 100644
+--- a/protocol/group/fallback_race_test.go
++++ b/protocol/group/fallback_race_test.go
+@@ -2,11 +2,19 @@ package group
+ 
+ import (
+ 	"context"
++	"fmt"
++	"net"
++	"runtime"
++	"sync"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
+ 	outboundAdapter "github.com/sagernet/sing-box/adapter/outbound"
++	"github.com/sagernet/sing-box/log"
+ 	M "github.com/sagernet/sing/common/metadata"
+ 	N "github.com/sagernet/sing/common/network"
+-	"net"
+-	"sync/atomic"
+ )
+ 
+ type fallbackRaceTestOutbound struct {
+@@ -38,3 +46,176 @@ func (o *fallbackRaceTestOutbound) ListenPacket(context.Context, M.Socksaddr) (n
+ 	o.listenCount.Add(1)
+ 	return net.ListenPacket("udp", "127.0.0.1:0")
+ }
++
++func TestFallbackSelectionUsedByAllRequestSurfaces(t *testing.T) {
++	primary := newFallbackRaceTestOutbound("primary")
++	secondary := newFallbackRaceTestOutbound("secondary")
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	fallback := &Fallback{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	destination := M.ParseSocksaddrHostPortStr("example.com", "80")
++
++	if selected := fallback.Selected(N.NetworkTCP); selected != primary {
++		t.Fatalf("expected Selected to report primary, got %v", selected)
++	}
++	connection, err := fallback.DialContext(context.Background(), N.NetworkTCP, destination)
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = connection.Close()
++	packetConnection, err := fallback.ListenPacket(context.Background(), destination)
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = packetConnection.Close()
++	if primary.dialCount.Load() != 1 {
++		t.Fatalf("expected primary to handle TCP request, got %d calls", primary.dialCount.Load())
++	}
++	if primary.listenCount.Load() != 1 {
++		t.Fatalf("expected primary to handle UDP request, got %d calls", primary.listenCount.Load())
++	}
++	if secondary.dialCount.Load() != 0 || secondary.listenCount.Load() != 0 {
++		t.Fatal("expected secondary to remain unused")
++	}
++}
++
++func TestFallbackSelectionConcurrentUpdateAndRequests(t *testing.T) {
++	primary := newFallbackRaceTestOutbound("primary")
++	secondary := newFallbackRaceTestOutbound("secondary")
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	fallback := &Fallback{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	destination := M.ParseSocksaddrHostPortStr("example.com", "80")
++	primaryTag := RealTag(primary, N.NetworkTCP)
++
++	start := make(chan struct{})
++	errCh := make(chan error, 3)
++	var workers sync.WaitGroup
++	workers.Add(4)
++	go func() {
++		defer workers.Done()
++		<-start
++		for range 2_000 {
++			group.deleteURLTestHistory(primaryTag)
++			group.performUpdateCheck()
++			group.reportURLTestSuccess(primaryTag, true)
++			markFallbackTestHealthy(group, primary)
++			group.performUpdateCheck()
++			runtime.Gosched()
++		}
++	}()
++	go func() {
++		defer workers.Done()
++		<-start
++		for range 4_000 {
++			selected := fallback.Selected(N.NetworkTCP)
++			if selected != primary && selected != secondary {
++				errCh <- fmt.Errorf("unexpected selected outbound %v", selected)
++				return
++			}
++			runtime.Gosched()
++		}
++	}()
++	go func() {
++		defer workers.Done()
++		<-start
++		for range 200 {
++			connection, err := fallback.DialContext(context.Background(), N.NetworkTCP, destination)
++			if err != nil {
++				errCh <- fmt.Errorf("dial: %w", err)
++				return
++			}
++			_ = connection.Close()
++		}
++	}()
++	go func() {
++		defer workers.Done()
++		<-start
++		for range 200 {
++			packetConnection, err := fallback.ListenPacket(context.Background(), destination)
++			if err != nil {
++				errCh <- fmt.Errorf("listen packet: %w", err)
++				return
++			}
++			_ = packetConnection.Close()
++		}
++	}()
++	close(start)
++	workers.Wait()
++	close(errCh)
++	for err := range errCh {
++		t.Fatal(err)
++	}
++	if primary.dialCount.Load()+secondary.dialCount.Load() != 200 {
++		t.Fatal("expected every TCP request to use a selected outbound")
++	}
++	if primary.listenCount.Load()+secondary.listenCount.Load() != 200 {
++		t.Fatal("expected every UDP request to use a selected outbound")
++	}
++}
++
++func TestFallbackSelectionUpdateDoesNotWaitForDial(t *testing.T) {
++	dialStarted := make(chan struct{})
++	dialRelease := make(chan struct{})
++	releaseDial := sync.OnceFunc(func() { close(dialRelease) })
++	defer releaseDial()
++	primary := newFallbackRaceTestOutbound("primary")
++	primary.dialStarted = dialStarted
++	primary.dialRelease = dialRelease
++	secondary := newFallbackRaceTestOutbound("secondary")
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	fallback := &Fallback{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	dialCompleted := make(chan error)
++	go func() {
++		connection, err := fallback.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPortStr("example.com", "80"))
++		if err == nil {
++			err = connection.Close()
++		}
++		dialCompleted <- err
++	}()
++	<-dialStarted
++
++	group.deleteURLTestHistory(RealTag(primary, N.NetworkTCP))
++	updateCompleted := make(chan struct{})
++	go func() {
++		group.performUpdateCheck()
++		close(updateCompleted)
++	}()
++	select {
++	case <-updateCompleted:
++	case <-dialCompleted:
++		t.Fatal("dial completed before it was released")
++	case <-time.After(time.Second):
++		t.Fatal("selection update waited for blocked network I/O")
++	}
++	releaseDial()
++	select {
++	case err := <-dialCompleted:
++		if err != nil {
++			t.Fatal(err)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("dial did not complete after it was released")
++	}
++	if selected := fallback.Selected(N.NetworkTCP); selected != secondary {
++		t.Fatalf("expected update to select secondary, got %v", selected)
++	}
++}
++
++var _ adapter.Outbound = (*fallbackRaceTestOutbound)(nil)
+diff --git a/protocol/group/fallback_test.go b/protocol/group/fallback_test.go
+index 7534d7ec0581be0aa8efcef7567fc0ba9eab94f7..ce459fc630a35353fe7dd5d71a39abbec453489e 100644
+--- a/protocol/group/fallback_test.go
++++ b/protocol/group/fallback_test.go
+@@ -2,10 +2,32 @@ package group
+ 
+ import (
+ 	"context"
++	"errors"
++	"net"
++	"slices"
++	"testing"
++	"time"
++
+ 	"github.com/sagernet/sing-box/adapter"
++	outboundAdapter "github.com/sagernet/sing-box/adapter/outbound"
++	"github.com/sagernet/sing-box/common/urltest"
++	C "github.com/sagernet/sing-box/constant"
+ 	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/service"
+ )
+ 
++type fallbackTestOutbound struct {
++	outboundAdapter.Adapter
++	dial        func(context.Context, string, M.Socksaddr) (net.Conn, error)
++	dialErr     error
++	listenErr   error
++	dialCount   int
++	listenCount int
++}
++
+ type fallbackTestOutboundManager struct {
+ 	outbounds map[string]adapter.Outbound
+ }
+@@ -53,3 +75,665 @@ func (m *fallbackTestOutboundManager) Remove(tag string) error {
+ func (m *fallbackTestOutboundManager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
+ 	return nil
+ }
++
++func newFallbackTestOutbound(tag string, networks []string) *fallbackTestOutbound {
++	return &fallbackTestOutbound{
++		Adapter: outboundAdapter.NewAdapter("test", tag, networks, nil),
++	}
++}
++
++func (o *fallbackTestOutbound) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	o.dialCount++
++	if o.dial != nil {
++		return o.dial(ctx, network, destination)
++	}
++	if o.dialErr != nil {
++		return nil, o.dialErr
++	}
++	client, server := net.Pipe()
++	_ = server.Close()
++	return client, nil
++}
++
++func (o *fallbackTestOutbound) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	o.listenCount++
++	if o.listenErr != nil {
++		return nil, o.listenErr
++	}
++	return net.ListenPacket("udp", "127.0.0.1:0")
++}
++
++func newFallbackTestGroup(t *testing.T, outbounds ...adapter.Outbound) *FallbackGroup {
++	t.Helper()
++	ctx := service.ContextWithPtr(context.Background(), urltest.NewHistoryStorage())
++	manager := newFallbackTestOutboundManager(outbounds...)
++	group, err := NewFallbackGroup(ctx, manager, log.NewNOPFactory().Logger(), outbounds, "", time.Minute, 2*time.Minute, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = group.Close() })
++	return group
++}
++
++func markFallbackTestHealthy(group *FallbackGroup, outbound adapter.Outbound) {
++	group.history.StoreURLTestHistory(RealTag(outbound, N.NetworkTCP), &adapter.URLTestHistory{
++		Time:  time.Now(),
++		Delay: 100,
++	})
++}
++
++func TestFallbackSelectsFirstHealthyOutbound(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
++	tertiary := newFallbackTestOutbound("tertiary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary, secondary, tertiary)
++
++	markFallbackTestHealthy(group, secondary)
++	markFallbackTestHealthy(group, tertiary)
++
++	selected, exists := group.Select(N.NetworkTCP)
++	if !exists {
++		t.Fatal("expected a healthy outbound")
++	}
++	if selected != secondary {
++		t.Fatalf("expected secondary, got %s", selected.Tag())
++	}
++
++	markFallbackTestHealthy(group, primary)
++	selected, exists = group.Select(N.NetworkTCP)
++	if !exists {
++		t.Fatal("expected a healthy outbound after primary recovers")
++	}
++	if selected != primary {
++		t.Fatalf("expected primary after recovery, got %s", selected.Tag())
++	}
++}
++
++func TestFallbackCheckOutboundsRefreshesRecentHistory(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary)
++	group.outbound = newFallbackTestOutboundManager(primary)
++	markFallbackTestHealthy(group, primary)
++
++	group.CheckOutbounds(false)
++
++	if primary.dialCount == 0 {
++		t.Fatal("expected periodic check to probe outbound even with recent history")
++	}
++	if history := group.history.LoadURLTestHistory(RealTag(primary, N.NetworkTCP)); history != nil {
++		t.Fatal("expected failed periodic check to delete recent history")
++	}
++}
++
++func TestFallbackCheckOutboundsSupportsTCPURL(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary)
++	group.outbound = newFallbackTestOutboundManager(primary)
++	group.link = "tcp://example.com:443"
++
++	group.CheckOutbounds(false)
++
++	if primary.dialCount != 1 {
++		t.Fatalf("expected tcp probe to dial once, got %d", primary.dialCount)
++	}
++	if history := group.history.LoadURLTestHistory(RealTag(primary, N.NetworkTCP)); history == nil {
++		t.Fatal("expected tcp probe to store history")
++	}
++}
++
++func TestFallbackForceCheckDeletesRecentHistory(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary)
++	group.outbound = newFallbackTestOutboundManager(primary)
++	markFallbackTestHealthy(group, primary)
++
++	group.CheckOutbounds(true)
++
++	if history := group.history.LoadURLTestHistory(RealTag(primary, N.NetworkTCP)); history != nil {
++		t.Fatal("expected force check failure to delete recent history")
++	}
++}
++
++func TestFallbackPeriodicFailureSwitchesImmediately(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != primary {
++		t.Fatalf("expected primary selected, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.deleteURLTestHistory(RealTag(primary, N.NetworkTCP))
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected secondary after periodic failure, got %s", group.selectedOutboundTCP.Tag())
++	}
++}
++
++func TestFallbackPeriodicSuccessDebouncesFailback(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != primary {
++		t.Fatalf("expected primary selected, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.deleteURLTestHistory(RealTag(primary, N.NetworkTCP))
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.reportURLTestSuccess(RealTag(primary, N.NetworkTCP), false)
++	markFallbackTestHealthy(group, primary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected secondary to stay selected after first primary recovery probe, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.reportURLTestSuccess(RealTag(primary, N.NetworkTCP), false)
++	markFallbackTestHealthy(group, primary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != primary {
++		t.Fatalf("expected primary after second primary recovery probe, got %s", group.selectedOutboundTCP.Tag())
++	}
++}
++
++func TestFallbackForceSuccessSwitchesBackImmediately(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++
++	group.deleteURLTestHistory(RealTag(primary, N.NetworkTCP))
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.reportURLTestSuccess(RealTag(primary, N.NetworkTCP), true)
++	markFallbackTestHealthy(group, primary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != primary {
++		t.Fatalf("expected primary after forced recovery probe, got %s", group.selectedOutboundTCP.Tag())
++	}
++}
++
++func TestFallbackProbeTimingFitsInterval(t *testing.T) {
++	t.Parallel()
++
++	probeInterval, probeTimeout := fallbackProbeTiming(10 * time.Second)
++	if probeInterval != 5*time.Second {
++		t.Fatalf("expected probe interval 5s, got %s", probeInterval)
++	}
++	if probeTimeout != 5*time.Second {
++		t.Fatalf("expected probe timeout 5s, got %s", probeTimeout)
++	}
++	if probeInterval+probeTimeout != 10*time.Second {
++		t.Fatalf("expected probe timing to fit configured interval, got %s", probeInterval+probeTimeout)
++	}
++}
++
++func TestFallbackProbeTimingCapsTimeout(t *testing.T) {
++	t.Parallel()
++
++	interval := time.Minute
++	probeInterval, probeTimeout := fallbackProbeTiming(interval)
++	if probeTimeout != C.TCPTimeout {
++		t.Fatalf("expected probe timeout %s, got %s", C.TCPTimeout, probeTimeout)
++	}
++	if probeInterval+probeTimeout != interval {
++		t.Fatalf("expected probe timing to fit configured interval, got %s", probeInterval+probeTimeout)
++	}
++}
++
++func TestFallbackSelectsFirstSupportedOutboundWithoutHistory(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP})
++	group := newFallbackTestGroup(t, primary, secondary)
++
++	selected, exists := group.Select(N.NetworkTCP)
++	if exists {
++		t.Fatal("did not expect a healthy outbound")
++	}
++	if selected != primary {
++		t.Fatalf("expected primary fallback, got %s", selected.Tag())
++	}
++}
++
++func TestFallbackSelectFiltersByNetwork(t *testing.T) {
++	t.Parallel()
++
++	tcpOnly := newFallbackTestOutbound("tcp-only", []string{N.NetworkTCP})
++	udpOnly := newFallbackTestOutbound("udp-only", []string{N.NetworkUDP})
++	group := newFallbackTestGroup(t, tcpOnly, udpOnly)
++
++	markFallbackTestHealthy(group, tcpOnly)
++	markFallbackTestHealthy(group, udpOnly)
++
++	selected, exists := group.Select(N.NetworkUDP)
++	if !exists {
++		t.Fatal("expected a healthy UDP outbound")
++	}
++	if selected != udpOnly {
++		t.Fatalf("expected udp-only, got %s", selected.Tag())
++	}
++}
++
++func TestFallbackUpdateSwitchesDownAndBackUpAfterStableRecovery(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary, secondary)
++
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != primary {
++		t.Fatalf("expected primary selected, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.deleteURLTestHistory(RealTag(primary, N.NetworkTCP))
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.reportURLTestSuccess(RealTag(primary, N.NetworkTCP), false)
++	markFallbackTestHealthy(group, primary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected secondary to stay selected after first primary recovery probe, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.reportURLTestSuccess(RealTag(primary, N.NetworkTCP), false)
++	markFallbackTestHealthy(group, primary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != primary {
++		t.Fatalf("expected primary after stable recovery, got %s", group.selectedOutboundTCP.Tag())
++	}
++}
++
++func TestFallbackUpdateKeepsCurrentWhenAllUnhealthyThenSwitchesBack(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary, secondary)
++
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++
++	group.deleteURLTestHistory(RealTag(primary, N.NetworkTCP))
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	group.deleteURLTestHistory(RealTag(secondary, N.NetworkTCP))
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected current selection to stay on secondary while all outbounds are unhealthy, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	markFallbackTestHealthy(group, primary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != primary {
++		t.Fatalf("expected primary after recovery, got %s", group.selectedOutboundTCP.Tag())
++	}
++}
++
++func TestFallbackUpdateInterruptsConnectionsOnSwitch(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP, N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary, secondary)
++
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++
++	client, server := net.Pipe()
++	wrapped := group.interruptGroup.NewConn(client, false)
++	defer wrapped.Close()
++	defer server.Close()
++	if err := server.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
++		t.Fatal(err)
++	}
++
++	group.deleteURLTestHistory(RealTag(primary, N.NetworkTCP))
++	group.performUpdateCheck()
++
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected secondary after primary failure, got %s", group.selectedOutboundTCP.Tag())
++	}
++	var buffer [1]byte
++	if _, err := server.Read(buffer[:]); err == nil {
++		t.Fatal("expected existing connection to be interrupted")
++	}
++}
++
++func TestFallbackDialFailureDeletesHistory(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
++	primary.dialErr = errors.New("dial failed")
++	group := newFallbackTestGroup(t, primary)
++	markFallbackTestHealthy(group, primary)
++
++	fallback := &Fallback{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	_, err := fallback.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPortStr("example.com", "80"))
++	if err == nil {
++		t.Fatal("expected dial error")
++	}
++	if history := group.history.LoadURLTestHistory(RealTag(primary, N.NetworkTCP)); history != nil {
++		t.Fatal("expected history to be deleted after dial failure")
++	}
++}
++
++func TestFallbackDialFailureSwitchesNextRequest(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP})
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	if group.selectedOutboundTCP != primary {
++		t.Fatalf("expected primary selected, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	primary.dialErr = errors.New("dial failed")
++	fallback := &Fallback{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	_, err := fallback.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPortStr("example.com", "80"))
++	if err == nil {
++		t.Fatal("expected first request to fail without retry")
++	}
++	if group.selectedOutboundTCP != secondary {
++		t.Fatalf("expected selected outbound to switch to secondary after failure, got %s", group.selectedOutboundTCP.Tag())
++	}
++
++	conn, err := fallback.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPortStr("example.com", "80"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = conn.Close()
++	if primary.dialCount != 1 {
++		t.Fatalf("expected primary to be dialed once, got %d", primary.dialCount)
++	}
++	if secondary.dialCount != 1 {
++		t.Fatalf("expected secondary to handle the next request, got %d dials", secondary.dialCount)
++	}
++}
++
++func TestFallbackListenPacketFailureSwitchesNextRequest(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkUDP})
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	if group.selectedOutboundUDP != primary {
++		t.Fatalf("expected primary selected, got %s", group.selectedOutboundUDP.Tag())
++	}
++
++	primary.listenErr = errors.New("listen failed")
++	fallback := &Fallback{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	_, err := fallback.ListenPacket(context.Background(), M.ParseSocksaddrHostPortStr("example.com", "80"))
++	if err == nil {
++		t.Fatal("expected first request to fail without retry")
++	}
++	if group.selectedOutboundUDP != secondary {
++		t.Fatalf("expected selected outbound to switch to secondary after failure, got %s", group.selectedOutboundUDP.Tag())
++	}
++
++	conn, err := fallback.ListenPacket(context.Background(), M.ParseSocksaddrHostPortStr("example.com", "80"))
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = conn.Close()
++	if primary.listenCount != 1 {
++		t.Fatalf("expected primary to listen once, got %d", primary.listenCount)
++	}
++	if secondary.listenCount != 1 {
++		t.Fatalf("expected secondary to handle the next request, got %d listens", secondary.listenCount)
++	}
++}
++
++func TestFallbackDisplayName(t *testing.T) {
++	t.Parallel()
++
++	if displayName := C.ProxyDisplayName(C.TypeFallback); displayName != "Fallback" {
++		t.Fatalf("expected Fallback display name, got %s", displayName)
++	}
++}
++
++func TestFallbackURLTestReturnsWhenCallerCancels(t *testing.T) {
++	t.Parallel()
++
++	started := make(chan struct{})
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
++	primary.dial = func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++		close(started)
++		<-ctx.Done()
++		return nil, ctx.Err()
++	}
++	group := newFallbackTestGroup(t, primary)
++	group.link = "tcp://example.com:443"
++	ctx, cancel := context.WithCancel(context.Background())
++	completed := make(chan struct{})
++	go func() {
++		_, _ = group.URLTest(ctx)
++		close(completed)
++	}()
++	<-started
++
++	cancel()
++
++	select {
++	case <-completed:
++	case <-time.After(time.Second):
++		t.Fatal("URL test did not stop after caller cancellation")
++	}
++}
++
++func TestFallbackCloseCancelsActiveProbe(t *testing.T) {
++	t.Parallel()
++
++	started := make(chan struct{})
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
++	primary.dial = func(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++		close(started)
++		<-ctx.Done()
++		return nil, ctx.Err()
++	}
++	group := newFallbackTestGroup(t, primary)
++	group.link = "tcp://example.com:443"
++	completed := make(chan struct{})
++	go func() {
++		group.CheckOutbounds(false)
++		close(completed)
++	}()
++	<-started
++
++	if err := group.Close(); err != nil {
++		t.Fatal(err)
++	}
++
++	select {
++	case <-completed:
++	case <-time.After(time.Second):
++		t.Fatal("active probe did not stop after group close")
++	}
++}
++
++func TestURLTestOutboundsUsesNestedFallbackURLTestGroup(t *testing.T) {
++	t.Parallel()
++
++	leaf := newFallbackTestOutbound("leaf", []string{N.NetworkTCP})
++	manager := newFallbackTestOutboundManager(leaf)
++	history := urltest.NewHistoryStorage()
++	ctx := service.ContextWithPtr(context.Background(), history)
++	fallback := &Fallback{
++		Adapter: outboundAdapter.NewAdapter(C.TypeFallback, "fallback", []string{N.NetworkTCP}, []string{"leaf"}),
++	}
++	manager.outbounds[fallback.Tag()] = fallback
++	fallbackGroup, err := NewFallbackGroup(ctx, manager, log.NewNOPFactory().Logger(), []adapter.Outbound{leaf}, "tcp://example.com:443", time.Minute, 2*time.Minute, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	fallback.group = fallbackGroup
++	t.Cleanup(func() { _ = fallbackGroup.Close() })
++
++	result := URLTestOutbounds(ctx, manager, history, log.NewNOPFactory().Logger(), []adapter.Outbound{fallback}, "", time.Minute, true)
++
++	if _, exists := result["leaf"]; !exists {
++		t.Fatal("expected nested fallback member result")
++	}
++	if _, exists := result["fallback"]; !exists {
++		t.Fatal("expected nested fallback group result")
++	}
++}
++
++func TestFallbackSelectUsesNetworkSpecificNestedGroup(t *testing.T) {
++	t.Parallel()
++
++	tcp := newFallbackTestOutbound("tcp", []string{N.NetworkTCP})
++	udp := newFallbackTestOutbound("udp", []string{N.NetworkUDP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP, N.NetworkUDP})
++	nestedGroup := newURLTestRaceGroup(t, tcp, udp)
++	markURLTestRaceHealthy(nestedGroup, tcp, 10)
++	markURLTestRaceHealthy(nestedGroup, udp, 10)
++	nestedGroup.performUpdateCheck()
++	nested := &URLTest{
++		Adapter: outboundAdapter.NewAdapter(C.TypeURLTest, "nested", []string{N.NetworkTCP, N.NetworkUDP}, []string{tcp.Tag(), udp.Tag()}),
++		group:   nestedGroup,
++	}
++	group := newFallbackTestGroup(t, nested, secondary)
++	markFallbackTestHealthy(group, tcp)
++	markFallbackTestHealthy(group, udp)
++	markFallbackTestHealthy(group, secondary)
++	group.performUpdateCheck()
++	fallback := &Fallback{group: group}
++	for _, network := range []string{N.NetworkTCP, N.NetworkUDP} {
++		if fallback.Selected(network) != nested {
++			t.Fatalf("expected nested group for %s", network)
++		}
++	}
++	if RealTag(fallback, N.NetworkTCP) != tcp.Tag() || RealTag(fallback, N.NetworkUDP) != udp.Tag() {
++		t.Fatal("nested group resolution did not respect the requested network")
++	}
++	group.deleteURLTestHistory(tcp.Tag())
++	group.performUpdateCheck()
++	if fallback.Selected(N.NetworkTCP) != secondary || fallback.Selected(N.NetworkUDP) != nested {
++		t.Fatal("TCP failure changed the wrong network selection")
++	}
++	if references := fallback.References(); !slices.Equal(references, []string{secondary.Tag(), nested.Tag()}) {
++		t.Fatalf("expected both network selections in references, got %v", references)
++	}
++}
++
++func TestFallbackScopeClosesGroupBeforeStartedStage(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
++	ctx := service.ContextWithPtr(t.Context(), urltest.NewHistoryStorage())
++	ctx = service.ContextWith[adapter.OutboundManager](ctx, newFallbackTestOutboundManager(primary))
++	logger := log.NewNOPFactory().Logger()
++	detour, err := NewFallback(ctx, nil, logger, "fallback", option.FallbackOutboundOptions{Outbounds: []string{primary.Tag()}})
++	if err != nil {
++		t.Fatal(err)
++	}
++	fallback := detour.(*Fallback)
++	scope := adapter.NewScope(ctx, logger)
++	t.Cleanup(func() { _ = scope.Close() })
++	if err = scope.Start("fallback", fallback, adapter.StartStateStart); err != nil {
++		t.Fatal(err)
++	}
++	if err = scope.Close(); err != nil {
++		t.Fatal(err)
++	}
++	if !errors.Is(fallback.group.ctx.Err(), context.Canceled) {
++		t.Fatal("scope did not close group created before the started stage")
++	}
++	fallback.group.Touch()
++	if fallback.group.ticker != nil {
++		t.Fatal("closed fallback restarted its ticker")
++	}
++}
++
++func TestFallbackRejectsDuplicateTags(t *testing.T) {
++	t.Parallel()
++
++	_, err := NewFallback(t.Context(), nil, log.NewNOPFactory().Logger(), "fallback", option.FallbackOutboundOptions{Outbounds: []string{"primary", "primary"}})
++	if err == nil {
++		t.Fatal("expected duplicate outbound tags to be rejected")
++	}
++}
++
++func TestFallbackRoutedFailureResetsRecoveryDebounce(t *testing.T) {
++	t.Parallel()
++
++	primary := newFallbackTestOutbound("primary", []string{N.NetworkTCP})
++	secondary := newFallbackTestOutbound("secondary", []string{N.NetworkTCP})
++	group := newFallbackTestGroup(t, primary, secondary)
++	markFallbackTestHealthy(group, primary)
++	markFallbackTestHealthy(group, secondary)
++	group.reportURLTestSuccess(primary.Tag(), true)
++	group.performUpdateCheck()
++	fallback := &Fallback{group: group}
++	group.history.DeleteURLTestHistory(primary.Tag())
++	fallback.ConnectionFailed(primary.Tag())
++	if fallback.Selected(N.NetworkTCP) != secondary {
++		t.Fatal("expected routed failure to switch to secondary")
++	}
++	group.reportURLTestSuccess(primary.Tag(), false)
++	markFallbackTestHealthy(group, primary)
++	group.performUpdateCheck()
++	if fallback.Selected(N.NetworkTCP) != secondary {
++		t.Fatal("stale successes bypassed recovery debounce")
++	}
++	group.reportURLTestSuccess(primary.Tag(), false)
++	group.performUpdateCheck()
++	if fallback.Selected(N.NetworkTCP) != primary {
++		t.Fatal("expected failback after two fresh successful probes")
++	}
++}
+diff --git a/protocol/group/urltest.go b/protocol/group/urltest.go
+index 6848f154fa640365705460dea6473ad323ce9e66..8e5aad58974e8401d833a0b3303735accb84a816 100644
+--- a/protocol/group/urltest.go
++++ b/protocol/group/urltest.go
+@@ -465,6 +465,16 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval
+ 				b.access.Unlock()
+ 				return nil, nil
+ 			})
++		case adapter.URLTestGroup:
++			b.checked[tag] = true
++			b.groups = append(b.groups, nested)
++			b.batch.Go(tag, func() (any, error) {
++				nestedResult, _ := nested.URLTest(b.ctx)
++				b.access.Lock()
++				maps.Copy(b.result, nestedResult)
++				b.access.Unlock()
++				return nil, nil
++			})
+ 		case adapter.OutboundGroup:
+ 			b.checked[tag] = true
+ 			b.groups = append(b.groups, nested)
+diff --git a/route/conn.go b/route/conn.go
+index cff6b1397d02e2dc98d806556af66f01d25fa19c..f2b9fb9a625152c4d7243188d3a332e5638fc6f8 100644
+--- a/route/conn.go
++++ b/route/conn.go
+@@ -286,7 +286,13 @@ func (m *ConnectionManager) deleteURLTestHistory(chain []adapter.Outbound) {
+ 		_, isURLTestGroup := it.(adapter.URLTestGroup)
+ 		return isURLTestGroup
+ 	}) {
+-		m.urlTestHistory.DeleteURLTestHistory(chain[len(chain)-1].Tag())
++		failedTag := chain[len(chain)-1].Tag()
++		m.urlTestHistory.DeleteURLTestHistory(failedTag)
++		for _, outbound := range slices.Backward(chain) {
++			if listener, loaded := outbound.(adapter.OutboundConnectionFailureListener); loaded {
++				listener.ConnectionFailed(failedTag)
++			}
++		}
+ 	}
+ }
+ 
+diff --git a/route/fallback_test.go b/route/fallback_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..e419c7245923225a4923dd277ce08fc8633546a0
+--- /dev/null
++++ b/route/fallback_test.go
+@@ -0,0 +1,221 @@
++package route
++
++import (
++	"context"
++	"errors"
++	"net"
++	"slices"
++	"sync/atomic"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/adapter/outbound"
++	"github.com/sagernet/sing-box/common/urltest"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing-box/protocol/group"
++	"github.com/sagernet/sing/common/bufio"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/service"
++)
++
++type fallbackRouteTestOutbound struct {
++	outbound.Adapter
++	err         error
++	dialCount   atomic.Int32
++	listenCount atomic.Int32
++}
++
++func (o *fallbackRouteTestOutbound) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
++	o.dialCount.Add(1)
++	return nil, o.err
++}
++
++func (o *fallbackRouteTestOutbound) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	o.listenCount.Add(1)
++	return nil, o.err
++}
++
++type fallbackRouteTestManager struct {
++	adapter.OutboundManager
++	outbounds       map[string]adapter.Outbound
++	defaultOutbound adapter.Outbound
++}
++
++func (m *fallbackRouteTestManager) Outbound(tag string) (adapter.Outbound, bool) {
++	detour, loaded := m.outbounds[tag]
++	return detour, loaded
++}
++
++func (m *fallbackRouteTestManager) Default() adapter.Outbound {
++	return m.defaultOutbound
++}
++
++func newFallbackRouteTestRouter(t *testing.T, nested bool, interruptConnections bool) (*Router, *group.Fallback, *fallbackRouteTestOutbound, *fallbackRouteTestOutbound) {
++	t.Helper()
++	history := urltest.NewHistoryStorage()
++	ctx := service.ContextWithPtr(t.Context(), history)
++	manager := &fallbackRouteTestManager{outbounds: make(map[string]adapter.Outbound)}
++	ctx = service.ContextWith[adapter.OutboundManager](ctx, manager)
++	logger := log.NewNOPFactory().Logger()
++	scope := adapter.NewScope(ctx, logger)
++	t.Cleanup(func() { _ = scope.Close() })
++	newLeaf := func(tag string) *fallbackRouteTestOutbound {
++		leaf := &fallbackRouteTestOutbound{
++			Adapter: outbound.NewAdapter("test", tag, []string{N.NetworkTCP, N.NetworkUDP}, nil),
++			err:     errors.New(tag + " unavailable"),
++		}
++		manager.outbounds[tag] = leaf
++		history.StoreURLTestHistory(tag, &adapter.URLTestHistory{Time: time.Now(), Delay: 10})
++		return leaf
++	}
++	primary := newLeaf("primary")
++	secondary := newLeaf("secondary")
++	detour, err := group.NewFallback(ctx, nil, logger, "fallback", option.FallbackOutboundOptions{
++		Outbounds:                 []string{primary.Tag(), secondary.Tag()},
++		InterruptExistConnections: interruptConnections,
++	})
++	if err != nil {
++		t.Fatal(err)
++	}
++	fallback := detour.(*group.Fallback)
++	manager.outbounds[fallback.Tag()] = fallback
++	if err = scope.Start("fallback", fallback, adapter.StartStateInitialize); err != nil {
++		t.Fatal(err)
++	}
++	if err = scope.Start("fallback", fallback, adapter.StartStateStart); err != nil {
++		t.Fatal(err)
++	}
++	fallback.PerformUpdateCheck()
++	manager.defaultOutbound = fallback
++	if nested {
++		selector, createErr := group.NewSelector(ctx, nil, logger, "selector", option.SelectorOutboundOptions{
++			Outbounds: []string{fallback.Tag()},
++		})
++		if createErr != nil {
++			t.Fatal(createErr)
++		}
++		if err = scope.Start("selector", selector.(adapter.Lifecycle), adapter.StartStateStart); err != nil {
++			t.Fatal(err)
++		}
++		manager.defaultOutbound = selector
++	}
++	return &Router{
++		ctx:        ctx,
++		logger:     logger,
++		outbound:   manager,
++		connection: NewConnectionManager(ctx, logger),
++	}, fallback, primary, secondary
++}
++
++func TestRoutedFallbackFailureSwitchesNextRequest(t *testing.T) {
++	for _, nested := range []bool{false, true} {
++		name := "fallback"
++		if nested {
++			name = "selector/fallback"
++		}
++		for _, network := range []string{N.NetworkTCP, N.NetworkUDP, "udp-connect"} {
++			t.Run(name+"/"+network, func(t *testing.T) {
++				t.Parallel()
++				router, fallback, primary, secondary := newFallbackRouteTestRouter(t, nested, false)
++				request := func() error {
++					metadata := adapter.InboundContext{
++						Destination: M.ParseSocksaddr("example.invalid:80"),
++						Domain:      "example.invalid",
++						UDPConnect:  network == "udp-connect",
++					}
++					closed := make(chan error, 1)
++					onClose := func(err error) { closed <- err }
++					if network == N.NetworkTCP {
++						client, server := net.Pipe()
++						defer client.Close()
++						defer server.Close()
++						router.RouteConnectionEx(t.Context(), client, metadata, onClose)
++					} else {
++						conn, err := net.ListenPacket("udp", "127.0.0.1:0")
++						if err != nil {
++							t.Fatal(err)
++						}
++						defer conn.Close()
++						router.RoutePacketConnectionEx(t.Context(), bufio.NewPacketConn(conn), metadata, onClose)
++					}
++					select {
++					case err := <-closed:
++						return err
++					case <-time.After(time.Second):
++						t.Fatal("routed request did not report its failure")
++						return nil
++					}
++				}
++				if err := request(); !errors.Is(err, primary.err) {
++					t.Fatalf("expected primary failure without a retry, got %v", err)
++				}
++				if fallback.Selected(N.NetworkTCP) != secondary || fallback.Selected(N.NetworkUDP) != secondary {
++					t.Fatal("routed leaf failure did not update fallback selection")
++				}
++				if references := fallback.References(); !slices.Equal(references, []string{secondary.Tag()}) {
++					t.Fatalf("expected secondary reference after switching, got %v", references)
++				}
++				if err := request(); !errors.Is(err, secondary.err) {
++					t.Fatalf("expected next request to use secondary, got %v", err)
++				}
++				for _, leaf := range []*fallbackRouteTestOutbound{primary, secondary} {
++					if calls := leaf.dialCount.Load() + leaf.listenCount.Load(); calls != 1 {
++						t.Fatalf("expected exactly one call to %s, got %d", leaf.Tag(), calls)
++					}
++				}
++			})
++		}
++	}
++}
++
++type fallbackRouteTestCloser struct {
++	closed int
++}
++
++func (c *fallbackRouteTestCloser) Close() error {
++	c.closed++
++	return nil
++}
++
++func TestRoutedFallbackInterruptAndDetach(t *testing.T) {
++	for _, interruptConnections := range []bool{false, true} {
++		name := "preserve-external"
++		if interruptConnections {
++			name = "interrupt-external"
++		}
++		t.Run(name, func(t *testing.T) {
++			t.Parallel()
++			router, fallback, primary, secondary := newFallbackRouteTestRouter(t, true, interruptConnections)
++			chain, err := resolveOutbound(router.outbound.Default(), N.NetworkTCP)
++			if err != nil {
++				t.Fatal(err)
++			}
++			closer := new(fallbackRouteTestCloser)
++			onClose := registerInterrupt(chain, closer, nil)
++			router.connection.(*ConnectionManager).deleteURLTestHistory(chain)
++			if interruptConnections && closer.closed != 1 || !interruptConnections && closer.closed != 0 {
++				t.Fatalf("unexpected close count on switch: %d", closer.closed)
++			}
++			onClose(nil)
++			before := closer.closed
++			history := service.PtrFromContext[urltest.HistoryStorage](router.ctx)
++			history.StoreURLTestHistory(primary.Tag(), &adapter.URLTestHistory{Time: time.Now(), Delay: 10})
++			history.DeleteURLTestHistory(secondary.Tag())
++			fallback.PerformUpdateCheck()
++			if fallback.Selected(N.NetworkTCP) != primary {
++				t.Fatal("expected failback after secondary becomes unavailable")
++			}
++			if closer.closed != before {
++				t.Fatal("detached connection was interrupted again")
++			}
++		})
++	}
++}
++
++var (
++	_ adapter.Outbound        = (*fallbackRouteTestOutbound)(nil)
++	_ adapter.OutboundManager = (*fallbackRouteTestManager)(nil)
++)

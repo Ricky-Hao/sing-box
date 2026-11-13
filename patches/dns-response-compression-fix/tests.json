@@ -1,0 +1,6 @@
+{
+  "checks": [
+    {"name": "DNS compression length truncation EDNS regressions", "tier": "focused", "cwd": ".", "requires": ["dns/client_truncate_test.go", "protocol/dns/handle_test.go"], "command": ["go", "test", "-count=1", "./dns", "./protocol/dns"]},
+    {"name": "DNS shared record race", "tier": "project", "cwd": ".", "requires": ["dns/client_truncate_test.go", "protocol/dns/handle_test.go"], "command": ["go", "test", "-race", "-count=1", "./dns", "./protocol/dns"]}
+  ]
+}

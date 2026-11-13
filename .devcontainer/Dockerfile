@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-# 与 fork 的 CI 工具链一致；go.mod 仍决定项目的最低 Go 版本。
+# 与维护测试工具链一致；生成应用的 go.mod 决定项目最低版本，发布使用 CI 固定版本。
 FROM golang:1.26.7-bookworm@sha256:e8c859f5632dcfde7b32d2012b4351728f6437930887c2f6a91ea242459e5514
 
 RUN apt-get update \

@@ -1,0 +1,10 @@
+{
+  "checks": [
+    {"name": "iWAN protocol endpoint server and options", "tier": "focused", "cwd": ".", "requires": ["transport/iwan/endpoint_test.go", "transport/iwan/server_test.go", "protocol/iwan/endpoint_test.go", "option/iwan_test.go"], "command": ["go", "test", "-count=1", "-tags", "with_iwan,with_gvisor", "./transport/iwan", "./protocol/iwan", "./option"]},
+    {"name": "iWAN include with both tags", "tier": "focused", "cwd": ".", "requires": ["include/iwan.go"], "command": ["go", "test", "-tags", "with_iwan,with_gvisor", "./include"]},
+    {"name": "iWAN stub without feature tags", "tier": "focused", "cwd": ".", "requires": ["include/iwan_stub.go"], "command": ["go", "test", "./include"]},
+    {"name": "mobile libbox tag regression", "tier": "focused", "cwd": ".", "requires": ["cmd/internal/build_libbox/main_test.go"], "command": ["go", "test", "-run", "^$", "./cmd/internal/build_libbox"]},
+    {"name": "mobile libbox tag assertions", "tier": "focused", "cwd": ".", "requires": ["cmd/internal/build_libbox/main_test.go"], "command": ["go", "test", "./cmd/internal/build_libbox"]},
+    {"name": "iWAN concurrency", "tier": "project", "cwd": ".", "requires": ["transport/iwan/server_test.go", "protocol/iwan/endpoint_test.go"], "command": ["go", "test", "-race", "-count=1", "-tags", "with_iwan,with_gvisor", "./transport/iwan", "./protocol/iwan"]}
+  ]
+}

@@ -1,0 +1,157 @@
+diff --git a/common/urltest/urltest.go b/common/urltest/urltest.go
+index 26efe39cbe4cb343cf8a42c73dc8877b57993203..2c20356f0a63613937f4655be2c16f9a0f34d426 100644
+--- a/common/urltest/urltest.go
++++ b/common/urltest/urltest.go
+@@ -3,6 +3,7 @@ package urltest
+ import (
+ 	"context"
+ 	"crypto/tls"
++	"errors"
+ 	"net"
+ 	"net/http"
+ 	"net/url"
+@@ -103,6 +104,9 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
+ 	if err != nil {
+ 		return
+ 	}
++	if linkURL.Scheme == "tcp" {
++		return tcpTest(ctx, linkURL, detour)
++	}
+ 	hostname := linkURL.Hostname()
+ 	port := linkURL.Port()
+ 	if port == "" {
+@@ -119,6 +123,7 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
+ 	if err != nil {
+ 		return
+ 	}
++
+ 	defer instance.Close()
+ 	if N.NeedHandshakeForWrite(instance) {
+ 		start = time.Now()
+@@ -151,3 +156,19 @@ func urlTest(ctx context.Context, link string, detour N.Dialer) (t uint16, err e
+ 	t = uint16(time.Since(start) / time.Millisecond)
+ 	return
+ }
++
++func tcpTest(ctx context.Context, linkURL *url.URL, detour N.Dialer) (t uint16, err error) {
++	hostname := linkURL.Hostname()
++	port := linkURL.Port()
++	if hostname == "" || port == "" {
++		return 0, errors.New("missing tcp test host or port")
++	}
++	start := time.Now()
++	instance, err := detour.DialContext(ctx, N.NetworkTCP, M.ParseSocksaddrHostPortStr(hostname, port))
++	if err != nil {
++		return 0, err
++	}
++	_ = instance.Close()
++	t = uint16(time.Since(start) / time.Millisecond)
++	return
++}
+diff --git a/common/urltest/urltest_test.go b/common/urltest/urltest_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..76392d89e01e3e3511790f7ec68d3dde3f2f8e30
+--- /dev/null
++++ b/common/urltest/urltest_test.go
+@@ -0,0 +1,75 @@
++package urltest
++
++import (
++	"context"
++	"errors"
++	"net"
++	"net/url"
++	"testing"
++
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++)
++
++type tcpTestDialer struct {
++	network     string
++	destination M.Socksaddr
++	err         error
++}
++
++func (d *tcpTestDialer) DialContext(ctx context.Context, network string, destination M.Socksaddr) (net.Conn, error) {
++	d.network = network
++	d.destination = destination
++	if d.err != nil {
++		return nil, d.err
++	}
++	client, server := net.Pipe()
++	_ = server.Close()
++	return client, nil
++}
++
++func (d *tcpTestDialer) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
++	return nil, errors.New("not implemented")
++}
++
++func TestURLTestSupportsTCPURL(t *testing.T) {
++	t.Parallel()
++
++	dialer := new(tcpTestDialer)
++	_, err := URLTest(context.Background(), "tcp://example.com:443", dialer)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if dialer.network != N.NetworkTCP {
++		t.Fatalf("expected tcp network, got %s", dialer.network)
++	}
++	if dialer.destination.String() != "example.com:443" {
++		t.Fatalf("expected example.com:443, got %s", dialer.destination)
++	}
++}
++
++func TestTCPTestRequiresPort(t *testing.T) {
++	t.Parallel()
++
++	linkURL, err := url.Parse("tcp://example.com")
++	if err != nil {
++		t.Fatal(err)
++	}
++	if _, err = tcpTest(context.Background(), linkURL, new(tcpTestDialer)); err == nil {
++		t.Fatal("expected missing port error")
++	}
++}
++
++func TestTCPTestReturnsDialError(t *testing.T) {
++	t.Parallel()
++
++	linkURL, err := url.Parse("tcp://example.com:443")
++	if err != nil {
++		t.Fatal(err)
++	}
++	expectedErr := errors.New("dial failed")
++	_, err = tcpTest(context.Background(), linkURL, &tcpTestDialer{err: expectedErr})
++	if !errors.Is(err, expectedErr) {
++		t.Fatalf("expected dial error, got %v", err)
++	}
++}
+diff --git a/docs/configuration/outbound/urltest.md b/docs/configuration/outbound/urltest.md
+index f4b3b0aa8e93eaab9ffb29c8283f34fd9f9517fc..62c3d02e5463a3aadb02172371643993fe21b456 100644
+--- a/docs/configuration/outbound/urltest.md
++++ b/docs/configuration/outbound/urltest.md
+@@ -30,6 +30,8 @@ List of outbound tags to test.
+ 
+ The URL to test. `https://www.gstatic.com/generate_204` will be used if empty.
+ 
++Use `tcp://host:port` to perform a pure TCP connect probe without HTTP or TLS overhead.
++
+ #### interval
+ 
+ The test interval. `3m` will be used if empty.
+diff --git a/docs/configuration/outbound/urltest.zh.md b/docs/configuration/outbound/urltest.zh.md
+index 4372298afc5fbace18c86665fef62e5cc2893262..e3c09f77a7a133cd57283b16d9a83ca6eca7a688 100644
+--- a/docs/configuration/outbound/urltest.zh.md
++++ b/docs/configuration/outbound/urltest.zh.md
+@@ -30,6 +30,8 @@
+ 
+ 用于测试的链接。默认使用 `https://www.gstatic.com/generate_204`。
+ 
++使用 `tcp://host:port` 可以执行纯 TCP 连接探测，避免 HTTP 和 TLS 开销。
++
+ #### interval
+ 
+ 测试间隔。 默认使用 `3m`。

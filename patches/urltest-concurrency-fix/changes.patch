@@ -1,0 +1,468 @@
+diff --git a/protocol/group/fallback_race_test.go b/protocol/group/fallback_race_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..5e696c754aa427e0c51bddbc0b5d251fad9b766f
+--- /dev/null
++++ b/protocol/group/fallback_race_test.go
+@@ -0,0 +1,40 @@
++package group
++
++import (
++	"context"
++	outboundAdapter "github.com/sagernet/sing-box/adapter/outbound"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"net"
++	"sync/atomic"
++)
++
++type fallbackRaceTestOutbound struct {
++	outboundAdapter.Adapter
++	dialCount   atomic.Int64
++	listenCount atomic.Int64
++	dialStarted chan<- struct{}
++	dialRelease <-chan struct{}
++}
++
++func newFallbackRaceTestOutbound(tag string) *fallbackRaceTestOutbound {
++	return &fallbackRaceTestOutbound{
++		Adapter: outboundAdapter.NewAdapter("test", tag, []string{N.NetworkTCP, N.NetworkUDP}, nil),
++	}
++}
++
++func (o *fallbackRaceTestOutbound) DialContext(context.Context, string, M.Socksaddr) (net.Conn, error) {
++	o.dialCount.Add(1)
++	if o.dialStarted != nil {
++		o.dialStarted <- struct{}{}
++		<-o.dialRelease
++	}
++	client, server := net.Pipe()
++	_ = server.Close()
++	return client, nil
++}
++
++func (o *fallbackRaceTestOutbound) ListenPacket(context.Context, M.Socksaddr) (net.PacketConn, error) {
++	o.listenCount.Add(1)
++	return net.ListenPacket("udp", "127.0.0.1:0")
++}
+diff --git a/protocol/group/fallback_test.go b/protocol/group/fallback_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..7534d7ec0581be0aa8efcef7567fc0ba9eab94f7
+--- /dev/null
++++ b/protocol/group/fallback_test.go
+@@ -0,0 +1,55 @@
++package group
++
++import (
++	"context"
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/log"
++)
++
++type fallbackTestOutboundManager struct {
++	outbounds map[string]adapter.Outbound
++}
++
++func newFallbackTestOutboundManager(outbounds ...adapter.Outbound) *fallbackTestOutboundManager {
++	manager := &fallbackTestOutboundManager{
++		outbounds: make(map[string]adapter.Outbound, len(outbounds)),
++	}
++	for _, outbound := range outbounds {
++		manager.outbounds[outbound.Tag()] = outbound
++	}
++	return manager
++}
++
++func (m *fallbackTestOutboundManager) Start(stage adapter.StartStage, scope *adapter.Scope) error {
++	return nil
++}
++
++func (m *fallbackTestOutboundManager) Close() error {
++	return nil
++}
++
++func (m *fallbackTestOutboundManager) Outbounds() []adapter.Outbound {
++	outbounds := make([]adapter.Outbound, 0, len(m.outbounds))
++	for _, outbound := range m.outbounds {
++		outbounds = append(outbounds, outbound)
++	}
++	return outbounds
++}
++
++func (m *fallbackTestOutboundManager) Outbound(tag string) (adapter.Outbound, bool) {
++	outbound, loaded := m.outbounds[tag]
++	return outbound, loaded
++}
++
++func (m *fallbackTestOutboundManager) Default() adapter.Outbound {
++	return nil
++}
++
++func (m *fallbackTestOutboundManager) Remove(tag string) error {
++	delete(m.outbounds, tag)
++	return nil
++}
++
++func (m *fallbackTestOutboundManager) Create(ctx context.Context, router adapter.Router, logger log.ContextLogger, tag string, outboundType string, options any) error {
++	return nil
++}
+diff --git a/protocol/group/urltest.go b/protocol/group/urltest.go
+index 46049d2385a54dcc06b37580db2bc95a2579daca..6848f154fa640365705460dea6473ad323ce9e66 100644
+--- a/protocol/group/urltest.go
++++ b/protocol/group/urltest.go
+@@ -106,9 +106,9 @@ func (s *URLTest) All() []string {
+ func (s *URLTest) Selected(network string) adapter.Outbound {
+ 	var outbound adapter.Outbound
+ 	if network == N.NetworkUDP {
+-		outbound = s.group.selectedOutboundUDP
++		outbound = s.group.selectedOutbound(N.NetworkUDP)
+ 	} else {
+-		outbound = s.group.selectedOutboundTCP
++		outbound = s.group.selectedOutbound(N.NetworkTCP)
+ 	}
+ 	if outbound == nil {
+ 		outbound, _ = s.group.Select(network)
+@@ -126,12 +126,13 @@ func (s *URLTest) References() []string {
+ 	if group == nil {
+ 		return nil
+ 	}
++	selectedOutboundTCP, selectedOutboundUDP := group.selectedOutbounds()
+ 	var references []string
+-	if group.selectedOutboundTCP != nil {
+-		references = append(references, group.selectedOutboundTCP.Tag())
++	if selectedOutboundTCP != nil {
++		references = append(references, selectedOutboundTCP.Tag())
+ 	}
+-	if group.selectedOutboundUDP != nil && group.selectedOutboundUDP != group.selectedOutboundTCP {
+-		references = append(references, group.selectedOutboundUDP.Tag())
++	if selectedOutboundUDP != nil && selectedOutboundUDP != selectedOutboundTCP {
++		references = append(references, selectedOutboundUDP.Tag())
+ 	}
+ 	return references
+ }
+@@ -171,9 +172,9 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
+ 	var outbound adapter.Outbound
+ 	switch N.NetworkName(network) {
+ 	case N.NetworkTCP:
+-		outbound = s.group.selectedOutboundTCP
++		outbound = s.group.selectedOutbound(N.NetworkTCP)
+ 	case N.NetworkUDP:
+-		outbound = s.group.selectedOutboundUDP
++		outbound = s.group.selectedOutbound(N.NetworkUDP)
+ 	default:
+ 		return nil, E.Extend(N.ErrUnknownNetwork, network)
+ 	}
+@@ -194,7 +195,7 @@ func (s *URLTest) DialContext(ctx context.Context, network string, destination M
+ 
+ func (s *URLTest) ListenPacket(ctx context.Context, destination M.Socksaddr) (net.PacketConn, error) {
+ 	s.group.Touch()
+-	outbound := s.group.selectedOutboundUDP
++	outbound := s.group.selectedOutbound(N.NetworkUDP)
+ 	if outbound == nil {
+ 		outbound, _ = s.group.Select(N.NetworkUDP)
+ 	}
+@@ -225,6 +226,7 @@ type URLTestGroup struct {
+ 	checking                     atomic.Bool
+ 	selectedOutboundTCP          adapter.Outbound
+ 	selectedOutboundUDP          adapter.Outbound
++	selectedOutboundAccess       sync.RWMutex
+ 	interruptGroup               *interrupt.Group
+ 	interruptExternalConnections bool
+ 	access                       sync.Mutex
+@@ -308,22 +310,34 @@ func (g *URLTestGroup) Close() error {
+ }
+ 
+ func (g *URLTestGroup) Select(network string) (adapter.Outbound, bool) {
+-	var minDelay uint16
+-	var minOutbound adapter.Outbound
++	return g.selectOutbound(network, g.selectedOutbound(network))
++}
++
++func (g *URLTestGroup) selectedOutbound(network string) adapter.Outbound {
++	g.selectedOutboundAccess.RLock()
++	defer g.selectedOutboundAccess.RUnlock()
+ 	switch network {
+ 	case N.NetworkTCP:
+-		if g.selectedOutboundTCP != nil {
+-			if history := g.history.LoadURLTestHistory(RealTag(g.selectedOutboundTCP, N.NetworkTCP)); history != nil {
+-				minOutbound = g.selectedOutboundTCP
+-				minDelay = history.Delay
+-			}
+-		}
++		return g.selectedOutboundTCP
+ 	case N.NetworkUDP:
+-		if g.selectedOutboundUDP != nil {
+-			if history := g.history.LoadURLTestHistory(RealTag(g.selectedOutboundUDP, N.NetworkUDP)); history != nil {
+-				minOutbound = g.selectedOutboundUDP
+-				minDelay = history.Delay
+-			}
++		return g.selectedOutboundUDP
++	}
++	return nil
++}
++
++func (g *URLTestGroup) selectedOutbounds() (adapter.Outbound, adapter.Outbound) {
++	g.selectedOutboundAccess.RLock()
++	defer g.selectedOutboundAccess.RUnlock()
++	return g.selectedOutboundTCP, g.selectedOutboundUDP
++}
++
++func (g *URLTestGroup) selectOutbound(network string, current adapter.Outbound) (adapter.Outbound, bool) {
++	var minDelay uint16
++	var minOutbound adapter.Outbound
++	if current != nil {
++		if history := g.history.LoadURLTestHistory(RealTag(current, network)); history != nil {
++			minOutbound = current
++			minDelay = history.Delay
+ 		}
+ 	}
+ 	for _, detour := range g.outbounds {
+@@ -503,24 +517,31 @@ func (b *urlTestBatch) test(outbounds []adapter.Outbound, link string, interval
+ func (g *URLTestGroup) performUpdateCheck() {
+ 	g.updateAccess.Lock()
+ 	defer g.updateAccess.Unlock()
++	selectedOutboundTCP, selectedOutboundUDP := g.selectedOutbounds()
++	nextOutboundTCP := selectedOutboundTCP
++	nextOutboundUDP := selectedOutboundUDP
+ 	var (
+ 		updated  bool
+ 		selected bool
+ 	)
+-	if outbound, exists := g.Select(N.NetworkTCP); outbound != nil && (g.selectedOutboundTCP == nil || (exists && outbound != g.selectedOutboundTCP)) {
+-		if g.selectedOutboundTCP != nil {
++	if outbound, exists := g.selectOutbound(N.NetworkTCP, selectedOutboundTCP); outbound != nil && (selectedOutboundTCP == nil || (exists && outbound != selectedOutboundTCP)) {
++		if selectedOutboundTCP != nil {
+ 			updated = true
+ 		}
+-		g.selectedOutboundTCP = outbound
++		nextOutboundTCP = outbound
+ 		selected = true
+ 	}
+-	if outbound, exists := g.Select(N.NetworkUDP); outbound != nil && (g.selectedOutboundUDP == nil || (exists && outbound != g.selectedOutboundUDP)) {
+-		if g.selectedOutboundUDP != nil {
++	if outbound, exists := g.selectOutbound(N.NetworkUDP, selectedOutboundUDP); outbound != nil && (selectedOutboundUDP == nil || (exists && outbound != selectedOutboundUDP)) {
++		if selectedOutboundUDP != nil {
+ 			updated = true
+ 		}
+-		g.selectedOutboundUDP = outbound
++		nextOutboundUDP = outbound
+ 		selected = true
+ 	}
++	g.selectedOutboundAccess.Lock()
++	g.selectedOutboundTCP = nextOutboundTCP
++	g.selectedOutboundUDP = nextOutboundUDP
++	g.selectedOutboundAccess.Unlock()
+ 	if updated {
+ 		g.interruptGroup.Interrupt(g.interruptExternalConnections)
+ 	}
+diff --git a/protocol/group/urltest_race_test.go b/protocol/group/urltest_race_test.go
+new file mode 100644
+index 0000000000000000000000000000000000000000..05d31f009179ce9d42c6e771295893f0f52e5617
+--- /dev/null
++++ b/protocol/group/urltest_race_test.go
+@@ -0,0 +1,206 @@
++package group
++
++import (
++	"context"
++	"fmt"
++	"runtime"
++	"sync"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	"github.com/sagernet/sing-box/common/urltest"
++	"github.com/sagernet/sing-box/log"
++	M "github.com/sagernet/sing/common/metadata"
++	N "github.com/sagernet/sing/common/network"
++	"github.com/sagernet/sing/service"
++)
++
++func newURLTestRaceGroup(t *testing.T, outbounds ...adapter.Outbound) *URLTestGroup {
++	t.Helper()
++	ctx := service.ContextWithPtr(context.Background(), urltest.NewHistoryStorage())
++	manager := newFallbackTestOutboundManager(outbounds...)
++	group, err := NewURLTestGroup(ctx, manager, log.NewNOPFactory().Logger(), outbounds, "", time.Minute, 50, 2*time.Minute, false)
++	if err != nil {
++		t.Fatal(err)
++	}
++	t.Cleanup(func() { _ = group.Close() })
++	return group
++}
++
++func markURLTestRaceHealthy(group *URLTestGroup, outbound adapter.Outbound, delay uint16) {
++	group.history.StoreURLTestHistory(RealTag(outbound, N.NetworkTCP), &adapter.URLTestHistory{
++		Time:  time.Now(),
++		Delay: delay,
++	})
++}
++
++func TestURLTestSelectionUsedByAllRequestSurfaces(t *testing.T) {
++	primary := newFallbackRaceTestOutbound("primary")
++	secondary := newFallbackRaceTestOutbound("secondary")
++	group := newURLTestRaceGroup(t, primary, secondary)
++	markURLTestRaceHealthy(group, primary, 1)
++	markURLTestRaceHealthy(group, secondary, 100)
++	group.performUpdateCheck()
++	urlTest := &URLTest{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	destination := M.ParseSocksaddrHostPortStr("example.com", "80")
++
++	if selected := urlTest.Selected(N.NetworkTCP); selected != primary {
++		t.Fatalf("expected Selected to report primary, got %v", selected)
++	}
++	connection, err := urlTest.DialContext(context.Background(), N.NetworkTCP, destination)
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = connection.Close()
++	packetConnection, err := urlTest.ListenPacket(context.Background(), destination)
++	if err != nil {
++		t.Fatal(err)
++	}
++	_ = packetConnection.Close()
++	if primary.dialCount.Load() != 1 {
++		t.Fatalf("expected primary to handle TCP request, got %d calls", primary.dialCount.Load())
++	}
++	if primary.listenCount.Load() != 1 {
++		t.Fatalf("expected primary to handle UDP request, got %d calls", primary.listenCount.Load())
++	}
++	if secondary.dialCount.Load() != 0 || secondary.listenCount.Load() != 0 {
++		t.Fatal("expected secondary to remain unused")
++	}
++}
++
++func TestURLTestSelectionConcurrentUpdateAndRequests(t *testing.T) {
++	primary := newFallbackRaceTestOutbound("primary")
++	secondary := newFallbackRaceTestOutbound("secondary")
++	group := newURLTestRaceGroup(t, primary, secondary)
++	markURLTestRaceHealthy(group, primary, 1)
++	markURLTestRaceHealthy(group, secondary, 100)
++	group.performUpdateCheck()
++	urlTest := &URLTest{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	destination := M.ParseSocksaddrHostPortStr("example.com", "80")
++	primaryTag := RealTag(primary, N.NetworkTCP)
++
++	start := make(chan struct{})
++	errCh := make(chan error, 3)
++	var workers sync.WaitGroup
++	workers.Add(4)
++	go func() {
++		defer workers.Done()
++		<-start
++		for range 2_000 {
++			group.history.DeleteURLTestHistory(primaryTag)
++			group.performUpdateCheck()
++			markURLTestRaceHealthy(group, primary, 1)
++			group.performUpdateCheck()
++			runtime.Gosched()
++		}
++	}()
++	go func() {
++		defer workers.Done()
++		<-start
++		for range 4_000 {
++			selected := urlTest.Selected(N.NetworkTCP)
++			if selected != primary && selected != secondary {
++				errCh <- fmt.Errorf("unexpected selected outbound %v", selected)
++				return
++			}
++			runtime.Gosched()
++		}
++	}()
++	go func() {
++		defer workers.Done()
++		<-start
++		for range 200 {
++			connection, err := urlTest.DialContext(context.Background(), N.NetworkTCP, destination)
++			if err != nil {
++				errCh <- fmt.Errorf("dial: %w", err)
++				return
++			}
++			_ = connection.Close()
++		}
++	}()
++	go func() {
++		defer workers.Done()
++		<-start
++		for range 200 {
++			packetConnection, err := urlTest.ListenPacket(context.Background(), destination)
++			if err != nil {
++				errCh <- fmt.Errorf("listen packet: %w", err)
++				return
++			}
++			_ = packetConnection.Close()
++		}
++	}()
++	close(start)
++	workers.Wait()
++	close(errCh)
++	for err := range errCh {
++		t.Fatal(err)
++	}
++	if primary.dialCount.Load()+secondary.dialCount.Load() != 200 {
++		t.Fatal("expected every TCP request to use a selected outbound")
++	}
++	if primary.listenCount.Load()+secondary.listenCount.Load() != 200 {
++		t.Fatal("expected every UDP request to use a selected outbound")
++	}
++}
++
++func TestURLTestSelectionUpdateDoesNotWaitForDial(t *testing.T) {
++	dialStarted := make(chan struct{})
++	dialRelease := make(chan struct{})
++	releaseDial := sync.OnceFunc(func() { close(dialRelease) })
++	defer releaseDial()
++	primary := newFallbackRaceTestOutbound("primary")
++	primary.dialStarted = dialStarted
++	primary.dialRelease = dialRelease
++	secondary := newFallbackRaceTestOutbound("secondary")
++	group := newURLTestRaceGroup(t, primary, secondary)
++	markURLTestRaceHealthy(group, primary, 1)
++	markURLTestRaceHealthy(group, secondary, 100)
++	group.performUpdateCheck()
++	urlTest := &URLTest{
++		logger: log.NewNOPFactory().Logger(),
++		group:  group,
++	}
++	dialCompleted := make(chan error)
++	go func() {
++		connection, err := urlTest.DialContext(context.Background(), N.NetworkTCP, M.ParseSocksaddrHostPortStr("example.com", "80"))
++		if err == nil {
++			err = connection.Close()
++		}
++		dialCompleted <- err
++	}()
++	<-dialStarted
++
++	group.history.DeleteURLTestHistory(RealTag(primary, N.NetworkTCP))
++	updateCompleted := make(chan struct{})
++	go func() {
++		group.performUpdateCheck()
++		close(updateCompleted)
++	}()
++	select {
++	case <-updateCompleted:
++	case <-dialCompleted:
++		t.Fatal("dial completed before it was released")
++	case <-time.After(time.Second):
++		t.Fatal("selection update waited for blocked network I/O")
++	}
++	releaseDial()
++	select {
++	case err := <-dialCompleted:
++		if err != nil {
++			t.Fatal(err)
++		}
++	case <-time.After(time.Second):
++		t.Fatal("dial did not complete after it was released")
++	}
++	if selected := urlTest.Selected(N.NetworkTCP); selected != secondary {
++		t.Fatalf("expected update to select secondary, got %v", selected)
++	}
++}

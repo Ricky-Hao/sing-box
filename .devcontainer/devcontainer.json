@@ -1,13 +1,15 @@
 {
-  "name": "sing-box",
+  "name": "sing-box feature patchset",
   "build": {
     "dockerfile": "Dockerfile",
     "context": ".."
   },
   "workspaceFolder": "/workspaces/sing-box",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/sing-box,type=bind",
   "remoteUser": "vscode",
   "containerUser": "vscode",
   "updateRemoteUserUID": false,
+  "postCreateCommand": "bash tools/prepare.sh",
   "customizations": {
     "vscode": {
       "extensions": ["golang.go"],

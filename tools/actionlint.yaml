@@ -1,0 +1,7 @@
+# actionlint v1.7.12 predates this hosted label. Keep the fork's build runner.
+# Verified in actions/runner-images README (blob cbb0ec6433933cd83d6c749bffbb24a2513388be):
+# https://github.com/actions/runner-images#available-images
+# actionlint's additional-label configuration is named self-hosted-runner.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04

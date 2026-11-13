@@ -1,0 +1,6 @@
+{
+  "checks": [
+    {"name": "TCP probe validation and errors", "tier": "focused", "cwd": ".", "requires": ["common/urltest/urltest_test.go"], "command": ["go", "test", "-count=1", "./common/urltest"]},
+    {"name": "TCP probe race", "tier": "project", "cwd": ".", "requires": ["common/urltest/urltest_test.go"], "command": ["go", "test", "-race", "-count=1", "./common/urltest"]}
+  ]
+}
